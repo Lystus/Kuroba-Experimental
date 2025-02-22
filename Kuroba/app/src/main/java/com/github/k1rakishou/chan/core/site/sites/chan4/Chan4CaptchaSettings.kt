@@ -12,5 +12,7 @@ data class Chan4CaptchaSettings(
   @SerializedName("use_captcha_solver")
   val useCaptchaSolver: Boolean = false,
   @SerializedName("captcha_ticket")
-  val captchaTicket: String? = null
+  val captchaTicket: String? = null,
+  @SerializedName("hcaptcha_token")
+  val hCaptchaToken: String? = null
 )

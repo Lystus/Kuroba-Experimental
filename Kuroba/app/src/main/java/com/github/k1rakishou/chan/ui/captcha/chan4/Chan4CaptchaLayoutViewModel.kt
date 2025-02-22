@@ -36,6 +36,9 @@ import com.github.k1rakishou.core_logger.Logger
 import com.github.k1rakishou.core_themes.ThemeEngine
 import com.github.k1rakishou.model.data.descriptor.ChanDescriptor
 import com.github.k1rakishou.prefs.GsonJsonSetting
+import com.github.michaelbull.result.Result
+import com.github.michaelbull.result.Ok
+import com.github.michaelbull.result.Err
 import com.squareup.moshi.Json
 import com.squareup.moshi.JsonClass
 import com.squareup.moshi.Moshi
@@ -90,12 +93,13 @@ class Chan4CaptchaLayoutViewModel : BaseViewModel() {
 
   private val captchaInfoCache = mutableMapOf<ChanDescriptor, CaptchaInfo>()
 
-  private var _captchaInfoToShow = mutableStateOf<AsyncData<CaptchaInfo>>(AsyncData.NotInitialized)
-  val captchaInfoToShow: State<AsyncData<CaptchaInfo>>
+  private var _captchaInfoToShow = mutableStateOf<AsyncData<Result<CaptchaInfo, HCaptchaInfo>>>(AsyncData.NotInitialized)
+  val captchaInfoToShow: State<AsyncData<Result<CaptchaInfo, HCaptchaInfo>>>
     get() = _captchaInfoToShow
 
   @Volatile private var notifiedUserAboutCaptchaSolver = false
   @Volatile private var currentTicket: String? = null
+  @Volatile private var currentHCaptchaTicket: String? = null
 
   private var _captchaSolverInstalled = mutableStateOf<Boolean>(false)
   val captchaSolverInstalled: State<Boolean>
@@ -137,8 +141,10 @@ class Chan4CaptchaLayoutViewModel : BaseViewModel() {
       return
     }
 
-    val captchaInfo = (_captchaInfoToShow.value as? AsyncData.Data)?.data
+    val captchaContainer = (_captchaInfoToShow.value as? AsyncData.Data)?.data
       ?: return
+    if (captchaContainer.isErr) return
+    val captchaInfo = captchaContainer.value
 
     val imgBitmap = captchaInfo.imgBitmap ?: return
 
@@ -201,7 +207,7 @@ class Chan4CaptchaLayoutViewModel : BaseViewModel() {
       Logger.d(TAG, "requestCaptcha() old captcha is still fine, " +
         "ttl: ${prevCaptchaInfo.ttlMillis()}, chanDescriptor=$chanDescriptor")
 
-      _captchaInfoToShow.value = AsyncData.Data(prevCaptchaInfo)
+      _captchaInfoToShow.value = AsyncData.Data(Ok(prevCaptchaInfo))
       startOrRestartCaptchaTtlUpdateTask(chanDescriptor)
 
       return
@@ -241,7 +247,8 @@ class Chan4CaptchaLayoutViewModel : BaseViewModel() {
         requestCaptchaInternal(
           appContext = appContext,
           chanDescriptor = chanDescriptor,
-          ticket = currentTicket
+          ticket = currentTicket,
+          ticketResp = currentHCaptchaTicket
         )
       }
       when (result) {
@@ -256,13 +263,15 @@ class Chan4CaptchaLayoutViewModel : BaseViewModel() {
 
             withContext(Dispatchers.Main) { requestCaptcha(appContext, chanDescriptor, forced = true) }
             return@launch
+          } else if (error is HCaptchaRequiredException) {
+            _captchaInfoToShow.value = AsyncData.Data(Err(HCaptchaInfo()))
           }
         }
         is ModularResult.Value -> {
           Logger.d(TAG, "requestCaptcha() success")
 
           captchaInfoCache[chanDescriptor] = result.value
-          _captchaInfoToShow.value = AsyncData.Data(result.value)
+          _captchaInfoToShow.value = AsyncData.Data(Ok(result.value))
 
           startOrRestartCaptchaTtlUpdateTask(chanDescriptor)
         }
@@ -312,14 +321,15 @@ class Chan4CaptchaLayoutViewModel : BaseViewModel() {
       while (isActive) {
         val captchaInfoAsyncData = _captchaInfoToShow.value
 
-        val captchaInfo = if (captchaInfoAsyncData !is AsyncData.Data) {
+        val captchaInfoContainer = if (captchaInfoAsyncData !is AsyncData.Data) {
           resetCaptchaForced(chanDescriptor)
           break
         } else {
           captchaInfoAsyncData.data
         }
+        if (captchaInfoContainer.isErr) break
 
-        val captchaTtlMillis = captchaInfo.ttlMillis().coerceAtLeast(0L)
+        val captchaTtlMillis = captchaInfoContainer.value.ttlMillis().coerceAtLeast(0L)
         _captchaTtlMillisFlow.value = captchaTtlMillis
 
         if (captchaTtlMillis <= 0) {
@@ -336,10 +346,11 @@ class Chan4CaptchaLayoutViewModel : BaseViewModel() {
   private suspend fun requestCaptchaInternal(
     appContext: Context,
     chanDescriptor: ChanDescriptor,
-    ticket: String?
+    ticket: String?,
+    ticketResp: String?
   ): CaptchaInfo {
     val boardCode = chanDescriptor.boardDescriptor().boardCode
-    val urlRaw = formatCaptchaUrl(chanDescriptor, boardCode, ticket)
+    val urlRaw = formatCaptchaUrl(chanDescriptor, boardCode, ticket, ticketResp)
 
     Logger.d(TAG, "requestCaptchaInternal($chanDescriptor) requesting $urlRaw")
 
@@ -349,6 +360,7 @@ class Chan4CaptchaLayoutViewModel : BaseViewModel() {
 
     siteManager.bySiteDescriptor(chanDescriptor.siteDescriptor())?.let { chan4 ->
       chan4.requestModifier().modifyCaptchaGetRequest(chan4, requestBuilder)
+      requestBuilder.removeHeader("Accept-Encoding")
     }
 
     val request = requestBuilder.build()
@@ -378,6 +390,11 @@ class Chan4CaptchaLayoutViewModel : BaseViewModel() {
 
     if (captchaInfoRaw == null) {
       throw IOException("Failed to convert json to CaptchaInfoRaw")
+    }
+
+    if (captchaInfoRaw.ticket is Boolean) {
+      Logger.d(TAG, "requestCaptchaInternal($chanDescriptor) ticked is boolean, assuming hcaptcha required")
+      throw HCaptchaRequiredException()
     }
 
     val newTicket = captchaInfoRaw.ticketAsString
@@ -494,7 +511,7 @@ class Chan4CaptchaLayoutViewModel : BaseViewModel() {
     )
   }
 
-  private fun formatCaptchaUrl(chanDescriptor: ChanDescriptor, boardCode: String, ticket: String?): String {
+  private fun formatCaptchaUrl(chanDescriptor: ChanDescriptor, boardCode: String, ticket: String?, ticketResp: String?): String {
     return buildString {
       when (chanDescriptor) {
         is ChanDescriptor.CompositeCatalogDescriptor -> {
@@ -506,12 +523,20 @@ class Chan4CaptchaLayoutViewModel : BaseViewModel() {
           if (ticket.isNotNullNorEmpty()) {
             append("&ticket=${ticket}")
           }
+
+          if (ticketResp.isNotNullNorEmpty()) {
+            append("&ticket_resp=${ticketResp}")
+          }
         }
         is ChanDescriptor.ThreadDescriptor -> {
           append("https://sys.4chan.org/captcha?board=${boardCode}&thread_id=${chanDescriptor.threadNo}")
 
           if (ticket.isNotNullNorEmpty()) {
             append("&ticket=${ticket}")
+          }
+
+          if (ticketResp.isNotNullNorEmpty()) {
+            append("&ticket_resp=${ticketResp}")
           }
         }
       }
@@ -559,8 +584,10 @@ class Chan4CaptchaLayoutViewModel : BaseViewModel() {
         return@launch
       }
 
-      val currentCaptchaInfo = (_captchaInfoToShow.value as? AsyncData.Data)?.data
+      val currentCaptchaInfoContainer = (_captchaInfoToShow.value as? AsyncData.Data)?.data
         ?: return@launch
+      if (currentCaptchaInfoContainer.isErr) return@launch
+      val currentCaptchaInfo = currentCaptchaInfoContainer.value
 
       _solvingInProgress.value = true
 
@@ -580,6 +607,11 @@ class Chan4CaptchaLayoutViewModel : BaseViewModel() {
 
       currentCaptchaInfo.captchaSolution.value = captchaSolution
     }
+  }
+
+  fun verifyHCaptcha(captchaInfo: Chan4CaptchaLayoutViewModel.HCaptchaInfo?, hcaptcha_ticket: String) {
+    currentHCaptchaTicket = hcaptcha_ticket
+    _captchaInfoToShow.value = AsyncData.Loading
   }
 
   fun onGotAutoSolverSuggestions(captchaSuggestions: List<String>) {
@@ -706,6 +738,10 @@ class Chan4CaptchaLayoutViewModel : BaseViewModel() {
 
   }
 
+  class HCaptchaInfo() {
+
+  }
+
   interface CaptchaCooldownError {
     val cooldownMs: Long
   }
@@ -721,6 +757,9 @@ class Chan4CaptchaLayoutViewModel : BaseViewModel() {
   class CaptchaPostRateLimitError(override val cooldownMs: Long) :
     Exception("4chan captcha rate-limit detected!\nPlease wait ${cooldownMs / 1000L} seconds before making a post."),
     CaptchaCooldownError
+
+  class HCaptchaRequiredException() :
+    Exception("4chan requires hcaptcha to be completed first")
 
   class UnknownCaptchaError(message: String) : java.lang.Exception(message)
 

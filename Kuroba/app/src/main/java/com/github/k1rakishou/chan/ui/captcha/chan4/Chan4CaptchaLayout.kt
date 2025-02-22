@@ -93,6 +93,11 @@ import com.github.k1rakishou.common.AndroidUtils
 import com.github.k1rakishou.core_themes.ThemeEngine
 import com.github.k1rakishou.model.data.descriptor.ChanDescriptor
 import com.github.k1rakishou.model.data.descriptor.SiteDescriptor
+import com.hcaptcha.sdk.HCaptchaCompose
+import com.hcaptcha.sdk.HCaptchaConfig
+import com.hcaptcha.sdk.HCaptchaEvent
+import com.hcaptcha.sdk.HCaptchaResponse
+import com.hcaptcha.sdk.HCaptchaSize
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import java.util.*
@@ -242,9 +247,11 @@ class Chan4CaptchaLayout(
   @Composable
   private fun BuildCaptchaWindowSliderOrInput() {
     val captchaInfoAsync by viewModel.captchaInfoToShow
-    val captchaInfo = (captchaInfoAsync as? AsyncData.Data)?.data
+    val captchaInfoContainer = (captchaInfoAsync as? AsyncData.Data)?.data ?: return
+    if (captchaInfoContainer.isErr) return
+    val captchaInfo = captchaInfoContainer.value
 
-    if (captchaInfo == null || captchaInfo.isNoopChallenge()) {
+    if (captchaInfo.isNoopChallenge()) {
       return
     }
 
@@ -441,7 +448,7 @@ class Chan4CaptchaLayout(
     val captchaInfoAsync by viewModel.captchaInfoToShow
     val solvingInProgress by viewModel.solvingInProgress
     val captchaSolverInstalled by viewModel.captchaSolverInstalled
-    val captchaInfo = (captchaInfoAsync as? AsyncData.Data)?.data
+    val captchaInfoContainer = (captchaInfoAsync as? AsyncData.Data)?.data
 
     Row(
       horizontalArrangement = Arrangement.End,
@@ -473,56 +480,56 @@ class Chan4CaptchaLayout(
 
       Spacer(modifier = Modifier.width(8.dp))
 
-      KurobaComposeClickableIcon(
-        modifier = Modifier
-          .padding(8.dp)
-          .width(28.dp)
-          .height(28.dp),
-        drawableId = R.drawable.ic_baseline_content_copy_24,
-        enabled = captchaInfo?.captchaInfoRawString != null,
-        onClick = {
-          captchaInfo?.captchaInfoRawString?.let { captchaInfoJson ->
-            AndroidUtils.setClipboardContent("captcha_json", captchaInfoJson)
-            showToast(context, "Captcha json copied to clipboard")
+      if (captchaInfoContainer?.isOk == true) {
+        val captchaInfo = captchaInfoContainer.value
+
+        KurobaComposeClickableIcon(
+          modifier = Modifier
+            .padding(8.dp)
+            .width(28.dp)
+            .height(28.dp),
+          drawableId = R.drawable.ic_baseline_content_copy_24,
+          enabled = captchaInfo.captchaInfoRawString != null,
+          onClick = {
+            captchaInfo.captchaInfoRawString?.let { captchaInfoJson ->
+              AndroidUtils.setClipboardContent("captcha_json", captchaInfoJson)
+              showToast(context, "Captcha json copied to clipboard")
+            }
           }
-        }
-      )
+        )
 
-      Spacer(modifier = Modifier.weight(1f))
+        Spacer(modifier = Modifier.weight(1f))
 
-      KurobaComposeTextBarButton(
-        onClick = {
-          if (captchaInfo?.captchaInfoRawString != null) {
-            viewModel.solveCaptcha(
-              context = context,
-              captchaInfoRawString = captchaInfo.captchaInfoRawString,
-              sliderOffset = captchaInfo.sliderValue.value
-            )
-          }
-        },
-        text = stringResource(id = R.string.captcha_layout_solve),
-        enabled = !solvingInProgress &&
-          captchaSolverInstalled &&
-          captchaInfo != null &&
-          captchaInfo.captchaInfoRawString != null
-      )
+        KurobaComposeTextBarButton(
+          onClick = {
+            if (captchaInfo.captchaInfoRawString != null) {
+              viewModel.solveCaptcha(
+                context = context,
+                captchaInfoRawString = captchaInfo.captchaInfoRawString,
+                sliderOffset = captchaInfo.sliderValue.value
+              )
+            }
+          },
+          text = stringResource(id = R.string.captcha_layout_solve),
+          enabled = !solvingInProgress &&
+                  captchaSolverInstalled && captchaInfo.captchaInfoRawString != null
+        )
 
-      Spacer(modifier = Modifier.width(8.dp))
+        Spacer(modifier = Modifier.width(8.dp))
 
-      KurobaComposeTextBarButton(
-        onClick = {
-          val currentInputValue = captchaInfo?.currentInputValue
-            ?: return@KurobaComposeTextBarButton
+        KurobaComposeTextBarButton(
+          onClick = {
+            val currentInputValue = captchaInfo.currentInputValue
+              ?: return@KurobaComposeTextBarButton
 
-          verifyCaptcha(captchaInfo, currentInputValue.value)
-        },
-        enabled = captchaInfo != null
-          && (captchaInfo.isNoopChallenge() || captchaInfo.currentInputValue.value.isNotEmpty())
-          && !solvingInProgress,
-        text = stringResource(id = R.string.captcha_layout_verify)
-      )
+            verifyCaptcha(captchaInfo, currentInputValue.value)
+          },
+          enabled = (captchaInfo.isNoopChallenge() || captchaInfo.currentInputValue.value.isNotEmpty()) && !solvingInProgress,
+          text = stringResource(id = R.string.captcha_layout_verify)
+        )
 
-      Spacer(modifier = Modifier.width(8.dp))
+        Spacer(modifier = Modifier.width(8.dp))
+      }
     }
   }
 
@@ -540,7 +547,7 @@ class Chan4CaptchaLayout(
       }
 
       if (size != IntSize.Zero) {
-        val captchaInfo = when (val cia = captchaInfoAsync) {
+        val captchaInfoContainer = when (val cia = captchaInfoAsync) {
           AsyncData.NotInitialized,
           AsyncData.Loading -> {
             KurobaComposeProgressIndicator(
@@ -565,24 +572,53 @@ class Chan4CaptchaLayout(
           is AsyncData.Data -> cia.data
         }
 
-        if (captchaInfo != null) {
-          if (captchaInfo.isNoopChallenge()) {
-            Box(
-              modifier = Modifier
-                .fillMaxWidth()
-                .height(128.dp)
-                .align(Alignment.Center)
-                .padding(vertical = 16.dp)
-            ) {
-              KurobaComposeText(
-                text = stringResource(id = R.string.captcha_layout_verification_not_required),
-                textAlign = TextAlign.Center,
+        if (captchaInfoContainer != null) {
+          if (captchaInfoContainer.isOk) {  // chan4 captcha
+            val captchaInfo = captchaInfoContainer.value
+            if (captchaInfo.isNoopChallenge()) {
+              Box(
                 modifier = Modifier
                   .fillMaxWidth()
-              )
+                  .height(128.dp)
+                  .align(Alignment.Center)
+                  .padding(vertical = 16.dp)
+              ) {
+                KurobaComposeText(
+                  text = stringResource(id = R.string.captcha_layout_verification_not_required),
+                  textAlign = TextAlign.Center,
+                  modifier = Modifier
+                    .fillMaxWidth()
+                )
+              }
+            } else {
+              BuildCaptchaImageNormal(captchaInfo, size)
             }
-          } else {
-            BuildCaptchaImageNormal(captchaInfo, size)
+          } else {  // hcaptcha
+            val hcaptchaInfo = captchaInfoContainer.error
+            HCaptchaCompose(
+              HCaptchaConfig
+                .builder()
+                .siteKey("49d294fa-f15c-41fc-80ba-c2544c52ec2a")
+                .size(HCaptchaSize.NORMAL)
+                .diagnosticLog(true)
+                .build()) { result ->
+              when (result) {
+                is HCaptchaResponse.Success -> {
+                  val text = "Success: ${result.token}"
+                  println(text)
+                  verifyHCaptcha(hcaptchaInfo, result.token)
+                }
+                is HCaptchaResponse.Failure -> {
+                  val text = "Failure: ${result.error.message}"
+                  println(text)
+                }
+                is HCaptchaResponse.Event -> {
+                  if (result.event == HCaptchaEvent.Opened) {
+                    println("Hcaptcha open")
+                  }
+                }
+              }
+            }
           }
         }
       }
@@ -691,6 +727,14 @@ class Chan4CaptchaLayout(
     } else {
       finishUpCaptchaVerification(solution, ttl, uuid)
     }
+  }
+
+  private fun verifyHCaptcha(
+    hcaptchaInfo: Chan4CaptchaLayoutViewModel.HCaptchaInfo?,
+    hCaptchaTicketResp: String
+  ) {
+    viewModel.verifyHCaptcha(hcaptchaInfo, hCaptchaTicketResp)
+    viewModel.requestCaptcha(context, chanDescriptor, forced = true)
   }
 
   private fun finishUpCaptchaVerification(
