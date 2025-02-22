@@ -228,7 +228,7 @@ android {
 
     kotlinOptions {
         jvmTarget = JavaVersion.VERSION_1_8.toString()
-        freeCompilerArgs = ["-Xopt-in=kotlin.RequiresOptIn"]
+        freeCompilerArgs = ["-opt-in=kotlin.RequiresOptIn"]
         jvmTarget = "17"
     }
 
@@ -294,6 +294,8 @@ dependencies {
     implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:${versions.kotlin_coroutines_version}"
     implementation "org.jetbrains.kotlinx:kotlinx-coroutines-rx2:${versions.kotlin_coroutines_version}"
     implementation "io.coil-kt:coil-base:${versions.coil}"
+    implementation "com.github.hCaptcha.hcaptcha-android-sdk:compose-sdk:${versions.hcaptcha}"
+    implementation "com.michael-bull.kotlin-result:kotlin-result:2.0.1"
 
     // noinspection GradleDependency wants to upgrade to older version
     implementation "com.github.K1rakishou:Fuck-Storage-Access-Framework:${versions.fsaf}"

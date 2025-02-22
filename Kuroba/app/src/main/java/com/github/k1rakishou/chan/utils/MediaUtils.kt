@@ -148,11 +148,13 @@ object MediaUtils {
         tempFile = this.tempFile
 
         FileOutputStream(tempFile).use { output ->
-          newBitmap!!.compress(
-            compressFormat,
-            quality,
-            output
-          )
+          compressFormat?.let {
+            newBitmap.compress(
+              it,
+              quality,
+              output
+            )
+          }
         }
 
         return tempFile

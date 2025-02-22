@@ -13,7 +13,7 @@ import java.util.concurrent.TimeUnit
 class TestDatabaseModuleComponent(
   private val application: Application = RuntimeEnvironment.application
 ) {
-  private val logger = Logger()
+  private val logger = Logger
   private var inMemoryDatabase: KurobaDatabase? = null
   private var onDiskDatabase: KurobaDatabase? = null
   private var okHttpClient: OkHttpClient? = null
