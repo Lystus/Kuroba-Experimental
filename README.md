@@ -1,7 +1,11 @@
 
 # Kuroba Experimental
 
-<p align="left"><a href="https://f-droid.org/packages/com.github.k1rakishou.chan.fdroid/"><img src="https://f-droid.org/assets/fdroid-logo-text.svg" width="250"></a></p> 
+Custom fork of Kuroba-Experimental
+
+The currently ongoing development is on branch v1.3.x-fixes
+
+## Legacy
 
 [Latest beta version](https://github.com/K1rakishou/Kuroba-Experimental-beta/releases/latest)
 
