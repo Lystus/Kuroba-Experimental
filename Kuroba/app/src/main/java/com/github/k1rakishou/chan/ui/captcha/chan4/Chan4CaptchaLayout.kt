@@ -56,6 +56,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.graphics.withScale
 import androidx.core.graphics.withTranslation
 import com.github.k1rakishou.ChanSettings
+import com.github.k1rakishou.chan.BuildConfig
 import com.github.k1rakishou.chan.R
 import com.github.k1rakishou.chan.controller.Controller
 import com.github.k1rakishou.chan.core.base.KurobaCoroutineScope
@@ -598,26 +599,11 @@ class Chan4CaptchaLayout(
             HCaptchaCompose(
               HCaptchaConfig
                 .builder()
-                .siteKey("49d294fa-f15c-41fc-80ba-c2544c52ec2a")
+                .siteKey(BuildConfig.HCAPTCHA_SITE_ID)
                 .size(HCaptchaSize.NORMAL)
                 .diagnosticLog(true)
                 .build()) { result ->
-              when (result) {
-                is HCaptchaResponse.Success -> {
-                  val text = "Success: ${result.token}"
-                  println(text)
-                  verifyHCaptcha(hcaptchaInfo, result.token)
-                }
-                is HCaptchaResponse.Failure -> {
-                  val text = "Failure: ${result.error.message}"
-                  println(text)
-                }
-                is HCaptchaResponse.Event -> {
-                  if (result.event == HCaptchaEvent.Opened) {
-                    println("Hcaptcha open")
-                  }
-                }
-              }
+                  viewModel.handleHCaptchaResult(context, chanDescriptor, hcaptchaInfo, result)
             }
           }
         }
@@ -727,14 +713,6 @@ class Chan4CaptchaLayout(
     } else {
       finishUpCaptchaVerification(solution, ttl, uuid)
     }
-  }
-
-  private fun verifyHCaptcha(
-    hcaptchaInfo: Chan4CaptchaLayoutViewModel.HCaptchaInfo?,
-    hCaptchaTicketResp: String
-  ) {
-    viewModel.verifyHCaptcha(hcaptchaInfo, hCaptchaTicketResp)
-    viewModel.requestCaptcha(context, chanDescriptor, forced = true)
   }
 
   private fun finishUpCaptchaVerification(

@@ -7,6 +7,7 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.RectF
 import android.util.Base64
+import android.util.Log
 import androidx.compose.runtime.State
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.graphics.Color
@@ -39,6 +40,8 @@ import com.github.k1rakishou.prefs.GsonJsonSetting
 import com.github.michaelbull.result.Result
 import com.github.michaelbull.result.Ok
 import com.github.michaelbull.result.Err
+import com.hcaptcha.sdk.HCaptchaEvent
+import com.hcaptcha.sdk.HCaptchaResponse
 import com.squareup.moshi.Json
 import com.squareup.moshi.JsonClass
 import com.squareup.moshi.Moshi
@@ -609,9 +612,27 @@ class Chan4CaptchaLayoutViewModel : BaseViewModel() {
     }
   }
 
-  fun verifyHCaptcha(captchaInfo: Chan4CaptchaLayoutViewModel.HCaptchaInfo?, hcaptcha_ticket: String) {
+  fun handleHCaptchaResult(context: Context, chanDescriptor: ChanDescriptor, hcaptchaInfo: Chan4CaptchaLayoutViewModel.HCaptchaInfo?, response: HCaptchaResponse) {
+    when (response) {
+      is HCaptchaResponse.Success -> {
+        Logger.d(TAG, "HCaptcha success: ${response.token}")
+        verifyHCaptcha(context, chanDescriptor, hcaptchaInfo, response.token)
+      }
+      is HCaptchaResponse.Failure -> {
+        Logger.d(TAG, "HCaptcha failure: ${response.error.message}")
+      }
+      is HCaptchaResponse.Event -> {
+        if (response.event == HCaptchaEvent.Opened) {
+          Logger.d(TAG, "HCaptcha open")
+        }
+      }
+    }
+  }
+
+  fun verifyHCaptcha(context: Context, chanDescriptor: ChanDescriptor, captchaInfo: Chan4CaptchaLayoutViewModel.HCaptchaInfo?, hcaptcha_ticket: String) {
     currentHCaptchaTicket = hcaptcha_ticket
     _captchaInfoToShow.value = AsyncData.Loading
+    requestCaptcha(context, chanDescriptor, forced = true)
   }
 
   fun onGotAutoSolverSuggestions(captchaSuggestions: List<String>) {
