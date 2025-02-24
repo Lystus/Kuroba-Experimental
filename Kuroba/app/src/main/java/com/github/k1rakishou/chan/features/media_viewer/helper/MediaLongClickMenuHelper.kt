@@ -93,6 +93,7 @@ class MediaLongClickMenuHelper(
 
     options += FloatingListMenuItem(ACTION_SHARE_MEDIA_URL, getString(R.string.action_share_media_url))
     options += FloatingListMenuItem(ACTION_SHARE_MEDIA_CONTENT, getString(R.string.action_share_media_content))
+    options += FloatingListMenuItem(ACTION_MEDIA_ROTATE_CW, getString(R.string.action_rotate_media_cw))
 
     if (viewableMedia.canReloadMedia()) {
       options += FloatingListMenuItem(ACTION_RELOAD_MEDIA, getString(R.string.action_reload))
@@ -160,6 +161,9 @@ class MediaLongClickMenuHelper(
       }
       ACTION_DOWNLOAD_WITH_OPTIONS_MEDIA_FILE_CONTENT -> {
         downloadMediaFile(context, true, viewableMedia)
+      }
+      ACTION_MEDIA_ROTATE_CW -> {
+        getMediaViewerAdapterFunc()?.rotateMedia(viewableMedia, false);
       }
     }
   }
@@ -257,6 +261,7 @@ class MediaLongClickMenuHelper(
     const val ACTION_RELOAD_MEDIA = 10
     const val ACTION_DOWNLOAD_MEDIA_FILE_CONTENT = 11
     const val ACTION_DOWNLOAD_WITH_OPTIONS_MEDIA_FILE_CONTENT = 12
+    const val ACTION_MEDIA_ROTATE_CW = 13
   }
 
 }

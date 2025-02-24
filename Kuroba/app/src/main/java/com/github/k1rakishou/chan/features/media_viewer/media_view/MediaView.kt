@@ -239,6 +239,14 @@ abstract class MediaView<T : ViewableMedia, S : MediaViewState> constructor(
   abstract fun unbind()
   abstract fun onInsetsChanged()
 
+  open fun rotateMedia(ccw: Boolean) {
+
+  }
+
+  open fun canRotateMedia(): Boolean {
+    return false
+  }
+
   protected open fun updateTransparency(backgroundColor: Int?) {
 
   }

@@ -408,6 +408,26 @@ class MediaViewerAdapter(
     }
   }
 
+  fun rotateMedia(viewableMedia: ViewableMedia, ccw: Boolean) {
+    // do nothing
+    loadedViews.forEach { loadedView ->
+      if (loadedView.mediaView.viewableMedia == viewableMedia) {
+        if (loadedView.mediaView.canRotateMedia()) {
+          loadedView.mediaView.rotateMedia(ccw)
+        }
+      }
+    }
+  }
+
+  fun canRotateMedia(viewableMedia: ViewableMedia): Boolean {
+    return loadedViews.filter { loadedView ->
+      if (loadedView.mediaView.viewableMedia == viewableMedia) {
+        return loadedView.mediaView.canRotateMedia()
+      }
+      return false
+    }.firstOrNull() != null
+  }
+
   fun updateTransparency() {
     loadedViews.forEach { loadedView -> loadedView.mediaView.onUpdateTransparency() }
   }

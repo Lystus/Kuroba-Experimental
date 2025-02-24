@@ -319,6 +319,17 @@ class FullImageMediaView(
     closeMediaActionHelper.onDestroy()
   }
 
+  override fun rotateMedia(ccw: Boolean) {
+    var orientation = actualImageView.orientation
+    if (orientation < 0) orientation = 0;
+    orientation += 90 * (if (ccw) -1 else 1)
+    actualImageView.orientation = (360 + orientation) % 360
+  }
+
+  override fun canRotateMedia(): Boolean {
+    return true
+  }
+
   override suspend fun reloadMedia() {
     if (preloadCancelableDownload != null) {
       return
