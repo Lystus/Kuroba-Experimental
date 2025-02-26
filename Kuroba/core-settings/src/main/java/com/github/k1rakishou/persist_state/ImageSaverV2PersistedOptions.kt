@@ -19,6 +19,8 @@ data class ImageSaverV2Options(
   var imageNameOptions: Int = ImageNameOptions.UseServerFileName.rawValue,
   @SerializedName("duplicates_resolution")
   var duplicatesResolution: Int = DuplicatesResolution.AskWhatToDo.rawValue,
+  @SerializedName("cloudflare_bypass_trick")
+  var cloudflareBypassTrick: Boolean = true,
 ) {
 
   fun shouldShowImageSaverOptionsController(): Boolean {

@@ -1626,5 +1626,7 @@ Actual error: \'%1$s\'</string>
 
     <string name="api_33_android_13_notifications_permission_title">Api 33 (Android 13+) notifications permission</string>
     <string name="api_33_android_13_notifications_permission_descriptor">Api 33 (Android 13+) requires applications to request for a permission to display notifications. Without this permission some application features may not work correctly (posting, media downloading, reply notifications, thread last page notifications, etc).\n\nYou can always enable this manually in Android OS application settings.</string>
+    <string name="controller_image_save_options_cloudflare_options">Cloudflare options</string>
+    <string name="controller_image_save_options_cloudflare_cache_bypass_trick">Cloudflare cache bypass trick</string>
 
 </resources>

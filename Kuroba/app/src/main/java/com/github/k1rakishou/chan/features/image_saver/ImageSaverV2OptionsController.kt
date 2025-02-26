@@ -60,6 +60,7 @@ class ImageSaverV2OptionsController(
   private lateinit var additionalDirs: ColorizableEditText
   private lateinit var customFileNameTil: ColorizableTextInputLayout
   private lateinit var additionalDirectoriesTil: ColorizableTextInputLayout
+  private lateinit var cloudflareBypassTrick: ColorizableCheckBox
   private lateinit var cancelButton: ColorizableBarButton
   private lateinit var saveButton: ColorizableBarButton
 
@@ -114,6 +115,7 @@ class ImageSaverV2OptionsController(
     customFileName = view.findViewById(R.id.custom_file_name)
     customFileNameTil = view.findViewById(R.id.custom_file_name_til)
     additionalDirectoriesTil = view.findViewById(R.id.additional_directories_til)
+    cloudflareBypassTrick = view.findViewById(R.id.cloudflare_cache_bypass_trick)
     cancelButton = view.findViewById(R.id.cancel_button)
     saveButton = view.findViewById(R.id.save_button)
 
@@ -271,6 +273,10 @@ class ImageSaverV2OptionsController(
     }
     appendThreadSubject.setOnCheckedChangeListener { _, isChecked ->
       currentSetting.appendThreadSubject = isChecked
+      applyOptionsToView()
+    }
+    cloudflareBypassTrick.setOnCheckedChangeListener { _, isChecked ->
+      currentSetting.cloudflareBypassTrick = isChecked
       applyOptionsToView()
     }
 
@@ -449,6 +455,8 @@ class ImageSaverV2OptionsController(
         duplicatesResolutionOptionsGroup.check(R.id.duplicate_resolution_options_save_as_duplicate)
       }
     }
+
+    cloudflareBypassTrick.isChecked = currentImageSaverSetting.cloudflareBypassTrick
 
     val simpleImageInfo = options.simpleImageInfoOrNull()
 

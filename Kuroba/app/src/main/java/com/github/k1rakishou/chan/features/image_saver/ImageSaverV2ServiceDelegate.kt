@@ -778,6 +778,16 @@ class ImageSaverV2ServiceDelegate(
     ) : ResultFile()
   }
 
+  fun preprocessMediaUrl(imageSaverV2Options: ImageSaverV2Options, mediaUrl: HttpUrl): HttpUrl {
+    if (imageSaverV2Options.cloudflareBypassTrick) {
+      val alphabet: List<Char> = ('a'..'z') + ('A'..'Z') + ('0'..'9')
+      val randomString: String = List(20) { alphabet.random() }.joinToString("")
+      val newUrl = mediaUrl.newBuilder().addQueryParameter("qq", randomString).build()
+      return newUrl
+    }
+    return mediaUrl;
+  }
+
   // TODO(KurobaEx): more logs
   private suspend fun downloadSingleImageInternal(
     hasResultDirAccessErrors: AtomicBoolean,
@@ -884,8 +894,10 @@ class ImageSaverV2ServiceDelegate(
         )
       }
 
-      val imageUrl = checkNotNull(chanPostImage!!.imageUrl) { "Image url is empty!" }
+      var imageUrl = checkNotNull(chanPostImage!!.imageUrl) { "Image url is empty!" }
       val threadDescriptor = chanPostImage!!.ownerPostDescriptor.threadDescriptor()
+
+      imageUrl = preprocessMediaUrl(imageDownloadInputData.imageSaverV2Options, imageUrl)
 
       try {
         doIoTaskWithAttempts(MAX_IO_ERROR_RETRIES_COUNT) {

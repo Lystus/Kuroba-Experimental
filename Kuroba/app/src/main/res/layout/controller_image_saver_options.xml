@@ -218,6 +218,18 @@
 
                         </RadioGroup>
 
+                        <com.github.k1rakishou.chan.ui.theme.widget.ColorizableTextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:gravity="center_horizontal"
+                            android:text="@string/controller_image_save_options_cloudflare_options" />
+
+                        <com.github.k1rakishou.chan.ui.theme.widget.ColorizableCheckBox
+                            android:id="@+id/cloudflare_cache_bypass_trick"
+                            android:layout_width="match_parent"
+                            android:layout_height="32dp"
+                            android:text="@string/controller_image_save_options_cloudflare_cache_bypass_trick" />
+
                     </LinearLayout>
 
                 </ScrollView>
