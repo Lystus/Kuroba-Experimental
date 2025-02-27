@@ -49,8 +49,8 @@ android {
         //          m -> Minor version
         //          p -> patch
         //          MmmPP
-        versionCode 10336
-        versionName "v1.3.36"
+        versionCode 10337
+        versionName "v1.3.37"
 
         // HCpatcha
         buildConfigField "String", "HCAPTCHA_SITE_ID", "\"49d294fa-f15c-41fc-80ba-c2544c52ec2a\""
