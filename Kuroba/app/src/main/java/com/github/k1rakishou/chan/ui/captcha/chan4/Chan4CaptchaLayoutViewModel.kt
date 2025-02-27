@@ -379,6 +379,8 @@ class Chan4CaptchaLayoutViewModel : BaseViewModel() {
       throw EmptyBodyResponseException()
     }
 
+    Logger.d(TAG, "captchaInfoRaw($chanDescriptor): $captchaInfoRawString")
+
     val captchaInfoRaw = try {
       captchaInfoRawAdapter.fromJson(captchaInfoRawString)
     } catch (error: Throwable) {
@@ -395,7 +397,7 @@ class Chan4CaptchaLayoutViewModel : BaseViewModel() {
       throw IOException("Failed to convert json to CaptchaInfoRaw")
     }
 
-    if (captchaInfoRaw.ticket is Boolean) {
+    if ((captchaInfoRaw.ticket is Boolean) and (captchaInfoRaw.challenge == null)) {
       Logger.d(TAG, "requestCaptchaInternal($chanDescriptor) ticked is boolean, assuming hcaptcha required")
       throw HCaptchaRequiredException()
     }
