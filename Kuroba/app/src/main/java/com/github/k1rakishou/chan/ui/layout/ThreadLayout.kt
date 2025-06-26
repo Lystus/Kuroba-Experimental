@@ -974,23 +974,9 @@ class ThreadLayout @JvmOverloads constructor(
     serializedCoroutineExecutor.post {
       presenter.reparsePostsWithReplies(listOf(post.postDescriptor)) { totalPostsWithReplies ->
         postFilterManager.removeMany(totalPostsWithReplies)
-
-        postHideManager.update(
-          postDescriptor = post.postDescriptor,
-          updater = { postDescriptor, oldChanPostHide ->
-            if (oldChanPostHide == null) {
-              return@update ChanPostHide(
-                postDescriptor = postDescriptor,
-                onlyHide = true,
-                applyToWholeThread = false,
-                applyToReplies = false,
-                manuallyRestored = true
-              )
-            }
-
-            return@update oldChanPostHide.copy(manuallyRestored = true)
-          }
-        )
+        
+        // Completely remove the post hide instead of just marking as manually restored
+        postHideManager.remove(post.postDescriptor)
       }
     }
   }
