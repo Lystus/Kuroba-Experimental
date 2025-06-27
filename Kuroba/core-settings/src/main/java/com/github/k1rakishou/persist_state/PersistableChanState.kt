@@ -79,6 +79,8 @@ object PersistableChanState {
   lateinit var dontKeepActivitiesWarningShown: BooleanSetting
   @JvmStatic
   lateinit var remoteImageSearchSettings: GsonJsonSetting<RemoteImageSearchSettings>
+  @JvmStatic
+  lateinit var manuallyUnhiddenPosts: GsonJsonSetting<ManuallyUnhiddenPostsList>
 
   fun init(persistableChanStateInfo: PersistableChanStateInfo) {
     PersistableChanState.persistableChanStateInfo = persistableChanStateInfo
@@ -176,6 +178,14 @@ object PersistableChanState {
         "remote_image_search_settings",
         RemoteImageSearchSettings.defaults()
       )
+
+      manuallyUnhiddenPosts = GsonJsonSetting(
+        gson,
+        ManuallyUnhiddenPostsList::class.java,
+        provider,
+        "manually_unhidden_posts",
+        ManuallyUnhiddenPostsList()
+      )
     } catch (e: Exception) {
       Logger.e(TAG, "Error while initializing the state", e)
       throw e
@@ -206,4 +216,34 @@ object PersistableChanState {
     return IndexAndTop(info.indexAndTop.index, 0)
   }
 
+}
+
+/**
+ * Data class for storing manually unhidden posts that should persist across app restarts.
+ * When the app starts or a catalog/thread refreshes, posts in this list will have the full
+ * "Undo" logic applied to them to ensure they remain unhidden and media playback works.
+ */
+data class ManuallyUnhiddenPostsList(
+  val postDescriptorStrings: MutableSet<String> = mutableSetOf()
+) {
+  
+  fun addPostString(postDescriptorString: String) {
+    postDescriptorStrings.add(postDescriptorString)
+  }
+  
+  fun removePostString(postDescriptorString: String) {
+    postDescriptorStrings.remove(postDescriptorString)
+  }
+  
+  fun containsPostString(postDescriptorString: String): Boolean {
+    return postDescriptorStrings.contains(postDescriptorString)
+  }
+  
+  fun getAllPostDescriptorStrings(): Set<String> {
+    return postDescriptorStrings.toSet()
+  }
+  
+  fun isEmpty(): Boolean = postDescriptorStrings.isEmpty()
+  
+  fun size(): Int = postDescriptorStrings.size
 }

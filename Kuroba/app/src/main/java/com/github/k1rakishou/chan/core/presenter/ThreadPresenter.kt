@@ -88,6 +88,7 @@ import com.github.k1rakishou.common.bidirectionalSequence
 import com.github.k1rakishou.common.errorMessageOrClassName
 import com.github.k1rakishou.common.hashSetWithCap
 import com.github.k1rakishou.core_logger.Logger
+import com.github.k1rakishou.persist_state.PersistableChanState
 import com.github.k1rakishou.core_spannable.PostLinkable
 import com.github.k1rakishou.core_themes.ThemeEngine
 import com.github.k1rakishou.core_themes.ThemeParser
@@ -2704,6 +2705,9 @@ class ThreadPresenter @Inject constructor(
       return
     }
 
+    // Apply "Undo" logic to all posts in the persistent unhidden list
+    applyUndoLogicToPersistentUnhiddenPosts(descriptor)
+
     val order = PostsFilter.Order.find(ChanSettings.boardOrder.get())
 
     // When processing filters which create new post hides we need to reparse those posts so that
@@ -2766,6 +2770,94 @@ class ThreadPresenter @Inject constructor(
       chanCacheUpdateOptions = ChanCacheUpdateOptions.DoNotUpdateCache,
       refreshPostPopupHelperPosts = true
     )
+  }
+
+  private suspend fun applyUndoLogicToPersistentUnhiddenPosts(descriptor: ChanDescriptor) {
+    // Get all manually unhidden posts from persistent storage
+    val unhiddenPostsList = PersistableChanState.manuallyUnhiddenPosts.get()
+    val unhiddenPostDescriptorStrings = unhiddenPostsList.getAllPostDescriptorStrings()
+    
+    Logger.d(TAG, "applyUndoLogicToPersistentUnhiddenPosts() found ${unhiddenPostDescriptorStrings.size} posts in persistent list")
+    
+    if (unhiddenPostDescriptorStrings.isEmpty()) {
+      return
+    }
+
+    // Convert strings back to PostDescriptor objects
+    val unhiddenPostDescriptors = unhiddenPostDescriptorStrings.mapNotNull { descriptorString ->
+      PostDescriptor.deserializeFromString(descriptorString)
+    }
+
+    Logger.d(TAG, "applyUndoLogicToPersistentUnhiddenPosts() applying undo logic to ${unhiddenPostDescriptors.size} unhidden posts: ${unhiddenPostDescriptors.map { it.toString() }}")
+
+    // Filter to only posts that belong to the current descriptor (catalog or thread)
+    val relevantPostDescriptors = unhiddenPostDescriptors.filter { postDescriptor ->
+      when (descriptor) {
+        is ChanDescriptor.CatalogDescriptor -> {
+          // For catalog view, include posts from threads in this catalog
+          postDescriptor.descriptor is ChanDescriptor.ThreadDescriptor &&
+            (postDescriptor.descriptor as ChanDescriptor.ThreadDescriptor).catalogDescriptor() == descriptor
+        }
+        is ChanDescriptor.ThreadDescriptor -> {
+          // For thread view, include posts from this specific thread
+          postDescriptor.descriptor == descriptor
+        }
+        is ChanDescriptor.CompositeCatalogDescriptor -> {
+          // For composite catalog, include posts from any of the contained catalogs
+          postDescriptor.descriptor is ChanDescriptor.ThreadDescriptor &&
+            descriptor.catalogDescriptors.contains(
+              (postDescriptor.descriptor as ChanDescriptor.ThreadDescriptor).catalogDescriptor()
+            )
+        }
+        else -> false
+      }
+    }
+
+    if (relevantPostDescriptors.isEmpty()) {
+      return
+    }
+
+    Logger.d(TAG, "applyUndoLogicToPersistentUnhiddenPosts() applying undo logic to ${relevantPostDescriptors.size} relevant posts")
+
+    // Check which posts still exist and clean up the persistent list
+    val existingPosts = chanThreadManager.getPosts(relevantPostDescriptors.toSet())
+    val existingPostDescriptors = existingPosts.map { it.postDescriptor }.toSet()
+    
+    val postsToCleanup = relevantPostDescriptors.filter { postDescriptor ->
+      !existingPostDescriptors.contains(postDescriptor)
+    }
+
+    if (postsToCleanup.isNotEmpty()) {
+      Logger.d(TAG, "applyUndoLogicToPersistentUnhiddenPosts() cleaning up ${postsToCleanup.size} non-existent posts from persistent list")
+      val updatedList = unhiddenPostsList
+      postsToCleanup.forEach { postDescriptor ->
+        updatedList.removePostString(postDescriptor.serializeToString())
+      }
+      PersistableChanState.manuallyUnhiddenPosts.setSync(updatedList)
+    }
+
+    // Get the updated persistent list after cleanup
+    val finalUnhiddenPostsList = PersistableChanState.manuallyUnhiddenPosts.get()
+
+    // Apply the "Undo" logic ONLY for posts that are still in the persistent unhidden list,
+    // exist in the current thread/catalog, and don't currently have a manual hide entry
+    val postsToUnhide = relevantPostDescriptors.filter { postDescriptor ->
+      val isInPersistentList = finalUnhiddenPostsList.containsPostString(postDescriptor.serializeToString())
+      val existsInThread = existingPostDescriptors.contains(postDescriptor)
+      
+      // Check if the post currently has a manual hide entry (if so, don't unhide it)
+      val hasManualHideEntry = postHideManager.hiddenOrRemoved(postDescriptor)
+      
+      existsInThread && isInPersistentList && !hasManualHideEntry
+    }
+    
+    if (postsToUnhide.isNotEmpty()) {
+      Logger.d(TAG, "applyUndoLogicToPersistentUnhiddenPosts() applying undo logic to ${postsToUnhide.size} posts still in persistent list: ${postsToUnhide.map { it.toString() }}")
+      
+      // Remove all filter/hide entries for these posts (same as "Undo" snackbar logic)
+      postFilterManager.removeMany(postsToUnhide.toSet())
+      postHideManager.removeManyChanPostHides(postsToUnhide.toSet())
+    }
   }
 
 

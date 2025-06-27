@@ -48,6 +48,7 @@ import com.github.k1rakishou.chan.core.manager.SiteManager
 import com.github.k1rakishou.chan.core.presenter.ThreadPresenter
 import com.github.k1rakishou.chan.core.presenter.ThreadPresenter.ThreadPresenterCallback
 import com.github.k1rakishou.chan.core.site.Site
+import com.github.k1rakishou.persist_state.PersistableChanState
 import com.github.k1rakishou.chan.core.site.loader.ChanLoaderException
 import com.github.k1rakishou.chan.features.drawer.MainControllerCallbacks
 import com.github.k1rakishou.chan.features.reencoding.ImageOptionsHelper
@@ -920,6 +921,7 @@ class ThreadLayout @JvmOverloads constructor(
 
       val hideList = mutableListOf<ChanPostHide>()
       val resultPostDescriptors = mutableListOf<PostDescriptor>()
+      val postsToRemoveFromUnhiddenList = mutableListOf<PostDescriptor>()
 
       for (postDescriptor in postDescriptors) {
         // Do not add the OP post to the hideList since we don't want to hide an OP post
@@ -937,9 +939,29 @@ class ThreadLayout @JvmOverloads constructor(
         )
 
         resultPostDescriptors += postDescriptor
+        
+        // Track posts that need to be removed from persistent unhidden list
+        val unhiddenPostsList = PersistableChanState.manuallyUnhiddenPosts.get()
+        val postDescriptorString = postDescriptor.serializeToString()
+        if (unhiddenPostsList.containsPostString(postDescriptorString)) {
+          postsToRemoveFromUnhiddenList += postDescriptor
+        }
       }
 
+      // First update the hide list
       postHideManager.createOrUpdateMany(hideList)
+      
+      // Remove posts from persistent unhidden list BEFORE triggering any refresh
+      if (postsToRemoveFromUnhiddenList.isNotEmpty()) {
+        val unhiddenPostsList = PersistableChanState.manuallyUnhiddenPosts.get()
+        postsToRemoveFromUnhiddenList.forEach { postDescriptor ->
+          unhiddenPostsList.removePostString(postDescriptor.serializeToString())
+          Logger.d("ThreadLayout", "Removed post ${postDescriptor} from persistent unhidden list")
+        }
+        PersistableChanState.manuallyUnhiddenPosts.setSync(unhiddenPostsList)
+      }
+      
+      // Now reparse and refresh
       presenter.reparsePostsWithReplies(resultPostDescriptors)
 
       val formattedString = if (hide) {
@@ -972,10 +994,17 @@ class ThreadLayout @JvmOverloads constructor(
 
   override fun unhideOrUnremovePost(post: ChanPost) {
     serializedCoroutineExecutor.post {
-      // Use the same logic as manual hide undo for consistency
-      postFilterManager.remove(post.postDescriptor)
-      postHideManager.remove(post.postDescriptor)
-      presenter.refreshUI()
+      // Add this post to the persistent unhidden list
+      val unhiddenPostsList = PersistableChanState.manuallyUnhiddenPosts.get()
+      unhiddenPostsList.addPostString(post.postDescriptor.serializeToString())
+      PersistableChanState.manuallyUnhiddenPosts.setSync(unhiddenPostsList)
+      
+      // Apply full "Undo" logic - remove all filter and hide entries for this post
+      presenter.reparsePostsWithReplies(listOf(post.postDescriptor)) { totalPostsWithReplies ->
+        postFilterManager.removeMany(totalPostsWithReplies)
+        postHideManager.removeManyChanPostHides(totalPostsWithReplies)
+        presenter.refreshUI()
+      }
     }
   }
 
