@@ -972,12 +972,10 @@ class ThreadLayout @JvmOverloads constructor(
 
   override fun unhideOrUnremovePost(post: ChanPost) {
     serializedCoroutineExecutor.post {
-      presenter.reparsePostsWithReplies(listOf(post.postDescriptor)) { totalPostsWithReplies ->
-        postFilterManager.removeMany(totalPostsWithReplies)
-        
-        // Completely remove the post hide instead of just marking as manually restored
-        postHideManager.remove(post.postDescriptor)
-      }
+      // Use the same logic as manual hide undo for consistency
+      postFilterManager.remove(post.postDescriptor)
+      postHideManager.remove(post.postDescriptor)
+      presenter.refreshUI()
     }
   }
 
@@ -994,7 +992,11 @@ class ThreadLayout @JvmOverloads constructor(
 
       presenter.reparsePostsWithReplies(selectedPosts) { totalPostsWithReplies ->
         postFilterManager.removeMany(totalPostsWithReplies)
-        postHideManager.removeManyChanPostHides(selectedPosts)
+        
+      // Use the same logic as manual hide undo for consistency
+      postFilterManager.removeMany(selectedPosts)
+      postHideManager.removeManyChanPostHides(selectedPosts)
+      presenter.refreshUI()
       }
 
       SnackbarWrapper.create(
