@@ -49,6 +49,7 @@ import com.github.k1rakishou.chan.core.presenter.ThreadPresenter
 import com.github.k1rakishou.chan.core.presenter.ThreadPresenter.ThreadPresenterCallback
 import com.github.k1rakishou.chan.core.site.Site
 import com.github.k1rakishou.persist_state.PersistableChanState
+import com.github.k1rakishou.persist_state.ManuallyUnhiddenPostsList
 import com.github.k1rakishou.chan.core.site.loader.ChanLoaderException
 import com.github.k1rakishou.chan.features.drawer.MainControllerCallbacks
 import com.github.k1rakishou.chan.features.reencoding.ImageOptionsHelper
@@ -923,6 +924,9 @@ class ThreadLayout @JvmOverloads constructor(
       val resultPostDescriptors = mutableListOf<PostDescriptor>()
       val postsToRemoveFromUnhiddenList = mutableListOf<PostDescriptor>()
 
+      // Track posts that need to be removed from persistent unhidden list
+      val existingUnhiddenList = PersistableChanState.manuallyUnhiddenPosts.get()
+
       for (postDescriptor in postDescriptors) {
         // Do not add the OP post to the hideList since we don't want to hide an OP post
         // while being in a thread (it just doesn't make any sense)
@@ -939,11 +943,10 @@ class ThreadLayout @JvmOverloads constructor(
         )
 
         resultPostDescriptors += postDescriptor
-        
-        // Track posts that need to be removed from persistent unhidden list
-        val unhiddenPostsList = PersistableChanState.manuallyUnhiddenPosts.get()
+
+        // Check if this post is in the persistent unhidden list
         val postDescriptorString = postDescriptor.serializeToString()
-        if (unhiddenPostsList.containsPostString(postDescriptorString)) {
+        if (existingUnhiddenList.containsPostString(postDescriptorString)) {
           postsToRemoveFromUnhiddenList += postDescriptor
         }
       }
@@ -953,14 +956,15 @@ class ThreadLayout @JvmOverloads constructor(
       
       // Remove posts from persistent unhidden list BEFORE triggering any refresh
       if (postsToRemoveFromUnhiddenList.isNotEmpty()) {
-        val unhiddenPostsList = PersistableChanState.manuallyUnhiddenPosts.get()
+        // Create a NEW instance to avoid reference equality issues in setSync()
+        val newUnhiddenPostsList = ManuallyUnhiddenPostsList(existingUnhiddenList.postDescriptorStrings.toMutableSet())
         postsToRemoveFromUnhiddenList.forEach { postDescriptor ->
-          unhiddenPostsList.removePostString(postDescriptor.serializeToString())
+          newUnhiddenPostsList.removePostString(postDescriptor.serializeToString())
           Logger.d("ThreadLayout", "Removed post ${postDescriptor} from persistent unhidden list")
         }
-        PersistableChanState.manuallyUnhiddenPosts.setSync(unhiddenPostsList)
+        PersistableChanState.manuallyUnhiddenPosts.setSync(newUnhiddenPostsList)
       }
-      
+    
       // Now reparse and refresh
       presenter.reparsePostsWithReplies(resultPostDescriptors)
 
@@ -993,11 +997,21 @@ class ThreadLayout @JvmOverloads constructor(
   }
 
   override fun unhideOrUnremovePost(post: ChanPost) {
+    Logger.d(TAG, "unhideOrUnremovePost() called for post: ${post.postDescriptor}")
+    
     serializedCoroutineExecutor.post {
       // Add this post to the persistent unhidden list
-      val unhiddenPostsList = PersistableChanState.manuallyUnhiddenPosts.get()
-      unhiddenPostsList.addPostString(post.postDescriptor.serializeToString())
-      PersistableChanState.manuallyUnhiddenPosts.setSync(unhiddenPostsList)
+      val existingList = PersistableChanState.manuallyUnhiddenPosts.get()
+      Logger.d(TAG, "unhideOrUnremovePost() - current unhidden list size: ${existingList.size()}")
+      
+      // Create a NEW instance to avoid reference equality issues in setSync()
+      val newUnhiddenPostsList = ManuallyUnhiddenPostsList(existingList.postDescriptorStrings.toMutableSet())
+      newUnhiddenPostsList.addPostString(post.postDescriptor.serializeToString())
+      Logger.d(TAG, "unhideOrUnremovePost() - after adding post, unhidden list size: ${newUnhiddenPostsList.size()}")
+      Logger.d(TAG, "unhideOrUnremovePost() - calling setSync with: $newUnhiddenPostsList")
+      
+      PersistableChanState.manuallyUnhiddenPosts.setSync(newUnhiddenPostsList)
+      Logger.d(TAG, "unhideOrUnremovePost() - setSync completed")
       
       // Apply full "Undo" logic - remove all filter and hide entries for this post
       presenter.reparsePostsWithReplies(listOf(post.postDescriptor)) { totalPostsWithReplies ->

@@ -186,6 +186,9 @@ object PersistableChanState {
         "manually_unhidden_posts",
         ManuallyUnhiddenPostsList()
       )
+      
+      Logger.d(TAG, "PersistableChanState.initInternal() - manuallyUnhiddenPosts initialized")
+      
     } catch (e: Exception) {
       Logger.e(TAG, "Error while initializing the state", e)
       throw e

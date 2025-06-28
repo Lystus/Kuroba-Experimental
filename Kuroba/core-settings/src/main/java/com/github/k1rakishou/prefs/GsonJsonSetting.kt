@@ -37,11 +37,15 @@ class GsonJsonSetting<T>(
   }
 
   override fun get(): T {
+    Logger.d("JsonSetting", "JsonSetting<${clazz.simpleName}>.get() - instance: ${this.hashCode()}, key: $key, hasCached: $hasCached")
+    
     if (hasCached) {
+      Logger.d("JsonSetting", "JsonSetting<${clazz.simpleName}>.get() - returning from cache: $cached")
       return cached!!
     }
 
     val json = settingProvider.getString(key, ChanSettings.EMPTY_JSON)
+    Logger.d("JsonSetting", "JsonSetting<${clazz.simpleName}>.get() - key: $key, json: $json")
 
     cached = try {
       gson.fromJson(json, clazz)
@@ -51,6 +55,7 @@ class GsonJsonSetting<T>(
     }
 
     hasCached = true
+    Logger.d("JsonSetting", "JsonSetting<${clazz.simpleName}>.get() - returning cached: $cached")
     return cached!!
   }
 
@@ -62,19 +67,24 @@ class GsonJsonSetting<T>(
     cached = value
 
     val json = gson.toJson(cached)
+    Logger.d("JsonSetting", "JsonSetting<${clazz.simpleName}>.set() - key: $key, json: $json")
     settingProvider.putString(key, json)
 
     settingState.onNext(value)
   }
 
   override fun setSync(value: T) {
+    Logger.d("JsonSetting", "JsonSetting<${clazz.simpleName}>.setSync() - instance: ${this.hashCode()}, key: $key, cached: $cached, new value: $value")
+    
     if (cached == value) {
+      Logger.d("JsonSetting", "JsonSetting<${clazz.simpleName}>.setSync() - value unchanged, skipping")
       return
     }
 
     cached = value
 
     val json = gson.toJson(cached)
+    Logger.d("JsonSetting", "JsonSetting<${clazz.simpleName}>.setSync() - key: $key, json: $json")
     settingProvider.putStringSync(key, json)
 
     settingState.onNext(value)

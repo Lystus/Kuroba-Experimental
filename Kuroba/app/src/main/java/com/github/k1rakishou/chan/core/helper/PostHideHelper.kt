@@ -16,6 +16,8 @@ import com.github.k1rakishou.model.data.post.ChanPostHide
 import com.github.k1rakishou.model.data.post.ChanPostWithFilterResult
 import com.github.k1rakishou.model.data.post.PostFilter
 import com.github.k1rakishou.model.data.post.PostFilterResult
+import com.github.k1rakishou.persist_state.PersistableChanState
+import com.github.k1rakishou.persist_state.ManuallyUnhiddenPostsList
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -89,6 +91,11 @@ class PostHideHelper(
 
         Logger.d(TAG, "processPostFilters($chanDescriptor) end (hiddenPostsCount=$hiddenPostsCount, " +
           "removedPostsCount=$removedPostsCount, normalPostsCount=$normalPostsCount, total=${resultMap.size})")
+
+        Logger.d(TAG, "About to call applyPersistentUnhiding with ${resultMap.size} posts")
+        // Apply persistent unhiding - override any filter decisions for manually unhidden posts
+        applyPersistentUnhiding(resultMap)
+        Logger.d(TAG, "Finished calling applyPersistentUnhiding")
 
         resultMap.mutableIteration { mutableIterator, entry ->
           val chanPostWithFilterResult = entry.value
@@ -333,6 +340,14 @@ class PostHideHelper(
       return false
     }
 
+    // Check if this post is in the persistent unhidden list
+    val unhiddenPostsList = PersistableChanState.manuallyUnhiddenPosts.get()
+    val postDescriptorString = post.postDescriptor.serializeToString()
+    if (unhiddenPostsList.containsPostString(postDescriptorString)) {
+      Logger.d(TAG, "canRemovePost: Post $postDescriptorString is in persistent unhidden list, not removing")
+      return false
+    }
+
     if (postFilter != null) {
       val attemptingToHide = (postFilter.enabled && postFilter.remove)
       if (attemptingToHide) {
@@ -373,6 +388,14 @@ class PostHideHelper(
       return false
     }
 
+    // Check if this post is in the persistent unhidden list
+    val unhiddenPostsList = PersistableChanState.manuallyUnhiddenPosts.get()
+    val postDescriptorString = post.postDescriptor.serializeToString()
+    if (unhiddenPostsList.containsPostString(postDescriptorString)) {
+      Logger.d(TAG, "canHidePost: Post $postDescriptorString is in persistent unhidden list, not hiding")
+      return false
+    }
+
     if (postFilter != null) {
       val attemptingToHide = (postFilter.enabled && postFilter.stub)
       if (attemptingToHide) {
@@ -401,6 +424,81 @@ class PostHideHelper(
     }
 
     return false
+  }
+
+  /**
+   * Applies persistent unhiding to posts that were manually unhidden by the user.
+   * This ensures that manually unhidden posts remain visible even after filters are applied.
+   */
+  private fun applyPersistentUnhiding(resultMap: MutableMap<PostDescriptor, ChanPostWithFilterResult>) {
+    val unhiddenPostsList = PersistableChanState.manuallyUnhiddenPosts.get()
+    
+    Logger.d(TAG, "applyPersistentUnhiding: unhiddenPostsList.size=${unhiddenPostsList.size()}, isEmpty=${unhiddenPostsList.isEmpty()}")
+    Logger.d(TAG, "applyPersistentUnhiding: resultMap.size=${resultMap.size}")
+    
+    if (unhiddenPostsList.isEmpty()) {
+      Logger.d(TAG, "applyPersistentUnhiding: unhiddenPostsList is empty, returning early")
+      return
+    }
+
+    // Log all unhidden posts for debugging
+    val allUnhiddenPosts = unhiddenPostsList.getAllPostDescriptorStrings()
+    Logger.d(TAG, "applyPersistentUnhiding: All unhidden posts: ${allUnhiddenPosts.joinToString(", ")}")
+
+    var unhiddenCount = 0
+    for ((postDescriptor, chanPostWithFilterResult) in resultMap.entries) {
+      val postDescriptorString = postDescriptor.serializeToString()
+      
+      if (unhiddenPostsList.containsPostString(postDescriptorString)) {
+        Logger.d(TAG, "applyPersistentUnhiding: Found unhidden post: $postDescriptorString, current filter result: ${chanPostWithFilterResult.postFilterResult}")
+        // This post was manually unhidden, override any filter decision
+        if (chanPostWithFilterResult.postFilterResult != PostFilterResult.Leave) {
+          chanPostWithFilterResult.postFilterResult = PostFilterResult.Leave
+          unhiddenCount++
+          Logger.d(TAG, "applyPersistentUnhiding: Changed filter result to Leave for: $postDescriptorString")
+        }
+      }
+    }
+
+    if (unhiddenCount > 0) {
+      Logger.d(TAG, "Applied persistent unhiding to $unhiddenCount posts")
+    } else {
+      Logger.d(TAG, "applyPersistentUnhiding: No posts were unhidden (no matches found between unhidden list and current posts)")
+    }
+  }
+
+  /**
+   * Adds a post to the persistent unhidden list so it will remain visible across app restarts.
+   * Call this when a user manually unhides a post.
+   */
+  fun addToPersistentUnhiddenList(postDescriptor: PostDescriptor) {
+    val existingList = PersistableChanState.manuallyUnhiddenPosts.get()
+    val postDescriptorString = postDescriptor.serializeToString()
+    
+    if (!existingList.containsPostString(postDescriptorString)) {
+      // Create a NEW instance to avoid reference equality issues in setSync()
+      val newUnhiddenPostsList = ManuallyUnhiddenPostsList(existingList.postDescriptorStrings.toMutableSet())
+      newUnhiddenPostsList.addPostString(postDescriptorString)
+      PersistableChanState.manuallyUnhiddenPosts.setSync(newUnhiddenPostsList)
+      Logger.d(TAG, "Added post to persistent unhidden list: $postDescriptorString")
+    }
+  }
+
+  /**
+   * Removes a post from the persistent unhidden list.
+   * Call this when a user manually hides a previously unhidden post.
+   */
+  fun removeFromPersistentUnhiddenList(postDescriptor: PostDescriptor) {
+    val existingList = PersistableChanState.manuallyUnhiddenPosts.get()
+    val postDescriptorString = postDescriptor.serializeToString()
+    
+    if (existingList.containsPostString(postDescriptorString)) {
+      // Create a NEW instance to avoid reference equality issues in setSync()
+      val newUnhiddenPostsList = ManuallyUnhiddenPostsList(existingList.postDescriptorStrings.toMutableSet())
+      newUnhiddenPostsList.removePostString(postDescriptorString)
+      PersistableChanState.manuallyUnhiddenPosts.setSync(newUnhiddenPostsList)
+      Logger.d(TAG, "Removed post from persistent unhidden list: $postDescriptorString")
+    }
   }
 
   class ChanPostHideWrapper(
