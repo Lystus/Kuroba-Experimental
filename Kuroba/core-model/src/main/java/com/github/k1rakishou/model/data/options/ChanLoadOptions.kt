@@ -2,7 +2,10 @@ package com.github.k1rakishou.model.data.options
 
 import com.github.k1rakishou.model.data.descriptor.PostDescriptor
 
-data class ChanLoadOptions(val chanLoadOption: ChanLoadOption) {
+data class ChanLoadOptions(
+  val chanLoadOption: ChanLoadOption,
+  val bypassFilters: Boolean = false
+) {
 
   fun canClearCache(): Boolean {
     return chanLoadOption is ChanLoadOption.ClearMemoryCache
@@ -37,6 +40,15 @@ data class ChanLoadOptions(val chanLoadOption: ChanLoadOption) {
 
     fun forceUpdateAllPosts(): ChanLoadOptions {
       return ChanLoadOptions(ChanLoadOption.ForceUpdatePosts(null))
+    }
+    
+    /**
+     * Creates ChanLoadOptions for loading threads from archives with filters bypassed
+     */
+    fun forArchiveThread(): ChanLoadOptions {
+      val options = ChanLoadOptions(ChanLoadOption.RetainAll, bypassFilters = true)
+      println("ChanLoadOptions.forArchiveThread() created with bypassFilters=${options.bypassFilters}")
+      return options
     }
 
   }

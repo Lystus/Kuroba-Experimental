@@ -631,8 +631,11 @@ class ThreadListLayout(context: Context, attrs: AttributeSet?)
     val posts = chanThreadManager.getMutableListOfPosts(descriptor)
 
     val (filteredPosts, applyFilterDuration) = measureTimedValue {
+      Logger.d(TAG, "showPosts($descriptor) about to call filter.applyFilter with bypassFilters=${filter.bypassFilters}, posts.size=${posts.size}")
       filter.applyFilter(descriptor, posts, additionalPostsToReparse)
     }
+
+    Logger.d(TAG, "showPosts($descriptor) filteredPosts.size=${filteredPosts.size} after applyFilter() completed")
 
     val chanDescriptor = currentChanDescriptorOrNull()
     chanLoadProgressNotifier.sendProgressEvent(ChanLoadProgressEvent.RefreshingPosts(descriptor))
@@ -640,13 +643,16 @@ class ThreadListLayout(context: Context, attrs: AttributeSet?)
     val setThreadPostsDuration = measureTime {
       val prevScrollPositionData = getPrevScrollPosition(chanDescriptor, initial)
 
+      Logger.d(TAG, "showPosts($descriptor) calling postAdapter.setThread with ${filteredPosts.size} posts, bypassFilters=${filter.bypassFilters}")
       postAdapter.setThread(
         chanDescriptor = descriptor,
         chanTheme = themeEngine.chanTheme,
         postIndexedList = filteredPosts,
         postCellDataWidthNoPaddings = recyclerViewWidth,
+        bypassFilters = filter.bypassFilters,
         prevScrollPositionData = prevScrollPositionData,
       )
+      Logger.d(TAG, "showPosts($descriptor) postAdapter.setThread completed")
     }
 
     setFastScroll(true, filteredPosts)

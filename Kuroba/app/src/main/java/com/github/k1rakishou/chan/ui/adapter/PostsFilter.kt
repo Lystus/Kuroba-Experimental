@@ -31,8 +31,13 @@ import java.util.*
 class PostsFilter(
   private val chanLoadProgressNotifier: ChanLoadProgressNotifier,
   private val postHideHelper: PostHideHelper,
-  private val order: Order
+  private val order: Order,
+  val bypassFilters: Boolean = false
 ) {
+
+  init {
+    Logger.d(TAG, "PostsFilter created with bypassFilters=$bypassFilters, order=$order")
+  }
 
   suspend fun applyFilter(
     chanDescriptor: ChanDescriptor,
@@ -47,16 +52,28 @@ class PostsFilter(
       )
     )
 
+    Logger.d(TAG, "PostsFilter.applyFilter($chanDescriptor) called with bypassFilters=$bypassFilters, posts.size=${posts.size}")
+
     if (order != Order.BUMP && chanDescriptor is ChanDescriptor.ICatalogDescriptor) {
       processOrder(order, posts as MutableList<ChanOriginalPost>)
     }
 
+    Logger.d(TAG, "PostsFilter.applyFilter($chanDescriptor) calling postHideHelper.processPostFilters with bypassFilters=$bypassFilters")
     // Process hidden by filter and post/thread hiding
-    val retainedPosts = postHideHelper.processPostFilters(chanDescriptor, posts, additionalPostsToReparse)
+    val retainedPosts = postHideHelper.processPostFilters(chanDescriptor, posts, additionalPostsToReparse, bypassFilters)
       .safeUnwrap { error ->
         Logger.e(TAG, "postHideHelper.filterHiddenPosts error", error)
         return emptyList()
       }
+    
+    Logger.d(TAG, "PostsFilter.applyFilter($chanDescriptor) received ${retainedPosts.size} posts back from processPostFilters (original: ${posts.size})")
+
+    // Log details about the first post to debug OP visibility
+    val firstRetainedPost = retainedPosts.firstOrNull()
+    if (firstRetainedPost != null) {
+      val isOP = firstRetainedPost is ChanOriginalPost
+      Logger.d(TAG, "PostsFilter.applyFilter: First retained post: postNo=${firstRetainedPost.postDescriptor.postNo}, isOP=$isOP")
+    }
 
     val indexedPosts = mutableListWithCap<PostIndexed>(retainedPosts.size)
 

@@ -101,6 +101,7 @@ import com.github.k1rakishou.model.data.filter.ChanFilterMutable
 import com.github.k1rakishou.model.data.filter.FilterType
 import com.github.k1rakishou.model.data.options.ChanCacheOptions
 import com.github.k1rakishou.model.data.options.ChanCacheUpdateOptions
+import com.github.k1rakishou.model.data.options.ChanLoadOption
 import com.github.k1rakishou.model.data.options.ChanLoadOptions
 import com.github.k1rakishou.model.data.options.ChanReadOptions
 import com.github.k1rakishou.model.data.post.ChanOriginalPost
@@ -237,6 +238,8 @@ class ThreadPresenter @Inject constructor(
   private var currentFocusedController = CurrentFocusedController.None
   private var currentNormalLoadThreadJob: Job? = null
   private var currentFullLoadThreadJob: Job? = null
+  private var isArchiveThread = false // Track if current thread is from archive to preserve bypassFilters
+  private var lastChanLoadOptions: ChanLoadOptions? = null // Store the last used load options to access bypassFilters in showPosts()
 
   override val endOfCatalogReached: Boolean
     get() {
@@ -461,11 +464,28 @@ class ThreadPresenter @Inject constructor(
     chanThreadTicker.startTicker(chanDescriptor)
   }
 
+  /**
+   * Sets the archive thread flag to ensure bypassFilters is preserved across all loads.
+   * Should be called when loading archive threads to maintain filter bypass state.
+   */
+  fun setArchiveThreadMode(enabled: Boolean) {
+    Logger.d(TAG, "setArchiveThreadMode($enabled) - previous value was: $isArchiveThread")
+    isArchiveThread = enabled
+    Logger.d(TAG, "setArchiveThreadMode($enabled) - new value is: $isArchiveThread")
+    
+    if (enabled) {
+      Logger.d(TAG, "setArchiveThreadMode: ARCHIVE MODE ENABLED - all subsequent loads will preserve bypassFilters=true")
+    } else {
+      Logger.d(TAG, "setArchiveThreadMode: Archive mode disabled")
+    }
+  }
+
   fun unbindChanDescriptor(isDestroying: Boolean) {
     BackgroundUtils.ensureMainThread()
 
     val currentChanDescriptor = chanThreadTicker.currentChanDescriptor
     Logger.d(TAG, "unbindChanDescriptor(isDestroying=$isDestroying) currentChanDescriptor=$currentChanDescriptor")
+    Logger.d(TAG, "unbindChanDescriptor: Archive thread state before unbind: isArchiveThread=$isArchiveThread")
 
     alreadyCreatedNavElement.set(false)
 
@@ -490,6 +510,12 @@ class ThreadPresenter @Inject constructor(
 
     if (isDestroying) {
       job.cancelChildren()
+      
+      // Only reset archive thread state when completely destroying the presenter
+      Logger.d(TAG, "unbindChanDescriptor: Destroying presenter, resetting isArchiveThread from $isArchiveThread to false")
+      isArchiveThread = false
+      lastChanLoadOptions = null
+      Logger.d(TAG, "unbindChanDescriptor: Reset lastChanLoadOptions to null")
 
       if (::postOptionsClickExecutor.isInitialized) {
         postOptionsClickExecutor.stop()
@@ -517,13 +543,15 @@ class ThreadPresenter @Inject constructor(
     }
 
     chanThreadLoadingState = ChanThreadLoadingState.Uninitialized
+    Logger.d(TAG, "unbindChanDescriptor: Archive thread state after unbind: isArchiveThread=$isArchiveThread")
   }
 
   @OptIn(ExperimentalTime::class)
   private suspend fun onChanTickerTick(chanDescriptor: ChanDescriptor) {
-    Logger.d(TAG, "onChanTickerTick($chanDescriptor)")
+    Logger.d(TAG, "onChanTickerTick($chanDescriptor) - isArchiveThread=$isArchiveThread")
 
     chanPostRepository.awaitUntilInitialized()
+    Logger.d(TAG, "onChanTickerTick: About to call normalLoad() - isArchiveThread=$isArchiveThread")
     normalLoad()
   }
 
@@ -789,6 +817,47 @@ class ThreadPresenter @Inject constructor(
     Logger.d(TAG, "normalLoad(currentChanDescriptor=$currentChanDescriptor\nshowLoading=$showLoading\n" +
       "chanCacheUpdateOptions=$chanCacheUpdateOptions\nchanLoadOptions=$chanLoadOptions\n" +
       "chanCacheOptions=$chanCacheOptions\nchanReadOptions=$chanReadOptions)")
+
+    Logger.d(TAG, "normalLoad() - isArchiveThread=$isArchiveThread, chanLoadOptions.bypassFilters=${chanLoadOptions.bypassFilters}")
+    Logger.d(TAG, "normalLoad() - chanLoadOptions.chanLoadOption=${chanLoadOptions.chanLoadOption}")
+
+    // If this is an archive thread and bypassFilters is not already set, preserve the archive bypass state
+    val finalChanLoadOptions = if (isArchiveThread && !chanLoadOptions.bypassFilters) {
+      Logger.d(TAG, "normalLoad() ARCHIVE THREAD DETECTED! isArchiveThread=$isArchiveThread, bypassFilters=${chanLoadOptions.bypassFilters}")
+      Logger.d(TAG, "normalLoad() Creating new ChanLoadOptions with bypassFilters=true for chanLoadOption=${chanLoadOptions.chanLoadOption}")
+      
+      val newOptions = when (chanLoadOptions.chanLoadOption) {
+        is ChanLoadOption.ForceUpdatePosts -> {
+          ChanLoadOptions(chanLoadOptions.chanLoadOption, bypassFilters = true)
+        }
+        is ChanLoadOption.RetainAll -> {
+          ChanLoadOptions(chanLoadOptions.chanLoadOption, bypassFilters = true)
+        }
+        is ChanLoadOption.ClearMemoryCache -> {
+          ChanLoadOptions(chanLoadOptions.chanLoadOption, bypassFilters = true)
+        }
+      }
+      
+      Logger.d(TAG, "normalLoad() Created new options with bypassFilters=${newOptions.bypassFilters}")
+      newOptions
+    } else {
+      if (isArchiveThread) {
+        Logger.d(TAG, "normalLoad() Archive thread but bypassFilters already true (${chanLoadOptions.bypassFilters}), using existing options")
+      } else {
+        Logger.d(TAG, "normalLoad() NOT an archive thread (isArchiveThread=$isArchiveThread), using original options")
+      }
+      chanLoadOptions
+    }
+    
+    // Store the final load options so showPosts() can access the bypassFilters value
+    lastChanLoadOptions = finalChanLoadOptions
+    Logger.d(TAG, "normalLoad() Stored lastChanLoadOptions.bypassFilters=${lastChanLoadOptions?.bypassFilters}")
+    
+    Logger.d(TAG, "normalLoad() FINAL OPTIONS: finalChanLoadOptions.bypassFilters=${finalChanLoadOptions.bypassFilters}")
+    Logger.d(TAG, "normalLoad() About to call chanThreadManager.loadThread with bypassFilters=${finalChanLoadOptions.bypassFilters}")
+    
+
+    Logger.d(TAG, "normalLoad() finalChanLoadOptions.bypassFilters=${finalChanLoadOptions.bypassFilters}")
 
     chanThreadLoadingState = ChanThreadLoadingState.Loading
 
@@ -2710,6 +2779,10 @@ class ThreadPresenter @Inject constructor(
 
     val order = PostsFilter.Order.find(ChanSettings.boardOrder.get())
 
+    // Get the bypassFilters value from the last used ChanLoadOptions
+    val bypassFilters = lastChanLoadOptions?.bypassFilters ?: false
+    Logger.d(TAG, "showPosts() Using bypassFilters=$bypassFilters from lastChanLoadOptions (isArchiveThread=$isArchiveThread)")
+
     // When processing filters which create new post hides we need to reparse those posts so that
     // their replies have the correct postlinkable types (QUOTE_TO_HIDDEN_OR_REMOVED_POST)
     val additionalPostsToReparse = mutableSetOf<PostDescriptor>()
@@ -2719,7 +2792,8 @@ class ThreadPresenter @Inject constructor(
       filter = PostsFilter(
         chanLoadProgressNotifier = chanLoadProgressNotifier,
         postHideHelper = postHideHelper,
-        order = order
+        order = order,
+        bypassFilters = bypassFilters
       ),
       refreshPostPopupHelperPosts = refreshPostPopupHelperPosts,
       additionalPostsToReparse = additionalPostsToReparse

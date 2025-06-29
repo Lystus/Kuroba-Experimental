@@ -20,7 +20,6 @@ import android.content.Context
 import androidx.core.content.ContextCompat
 import com.github.k1rakishou.ChanSettings
 import com.github.k1rakishou.chan.R
-import com.github.k1rakishou.chan.R.string.action_reload
 import com.github.k1rakishou.chan.core.di.component.activity.ActivityComponent
 import com.github.k1rakishou.chan.core.helper.DialogFactory
 import com.github.k1rakishou.chan.core.manager.BookmarksManager
@@ -68,7 +67,8 @@ import kotlin.time.Duration.Companion.milliseconds
 open class ViewThreadController(
   context: Context,
   mainControllerCallbacks: MainControllerCallbacks,
-  startingThreadDescriptor: ThreadDescriptor
+  startingThreadDescriptor: ThreadDescriptor,
+  private val isArchiveThread: Boolean = false
 ) : ThreadController(context, mainControllerCallbacks),
   ThreadLayoutCallback,
   ToobarThreedotMenuCallback,
@@ -115,7 +115,14 @@ open class ViewThreadController(
         .collect { bookmarkChange -> updatePinIconStateIfNeeded(bookmarkChange) }
     }
 
-    mainScope.launch(Dispatchers.Main) { loadThread(threadDescriptor) }
+    mainScope.launch(Dispatchers.Main) { 
+      if (isArchiveThread) {
+        Logger.d(TAG, "ViewThreadController.onCreate() calling loadArchiveThread for archive thread")
+        loadArchiveThread(threadDescriptor)
+      } else {
+        loadThread(threadDescriptor)
+      }
+    }
   }
 
   private fun updatePinIconStateIfNeeded(bookmarkChange: BookmarkChange) {
@@ -177,7 +184,7 @@ open class ViewThreadController(
       ) { item -> searchClicked(item) }
       .withSubItem(
         ACTION_RELOAD,
-        action_reload
+        R.string.action_reload
       ) { item -> reloadClicked(item) }
       .withSubItem(
         ACTION_DOWNLOAD_THREAD,
@@ -611,6 +618,64 @@ open class ViewThreadController(
     val oldThreadDescriptor = threadLayout.presenter.currentChanDescriptor as? ThreadDescriptor
 
     presenter.bindChanDescriptor(newThreadDescriptor)
+    this.threadDescriptor = newThreadDescriptor
+
+    updateMenuItems()
+    updateNavigationTitle(oldThreadDescriptor, newThreadDescriptor)
+    requireNavController().requireToolbar().updateTitle(navigation)
+
+    setPinIconState(false)
+    updateLeftPaneHighlighting(newThreadDescriptor)
+  }
+
+  suspend fun loadArchiveThread(
+    threadDescriptor: ThreadDescriptor,
+    openingExternalThread: Boolean = false,
+    openingPreviousThread: Boolean = false
+  ) {
+    Logger.d(TAG, "loadArchiveThread($threadDescriptor)")
+
+    val presenter = threadLayout.presenter
+    if (threadDescriptor != presenter.currentChanDescriptor) {
+      loadArchiveThreadInternal(threadDescriptor, openingExternalThread, openingPreviousThread)
+    }
+  }
+
+  private suspend fun loadArchiveThreadInternal(
+    newThreadDescriptor: ThreadDescriptor,
+    openingExternalThread: Boolean,
+    openingPreviousThread: Boolean
+  ) {
+    Logger.d(TAG, "loadArchiveThreadInternal($newThreadDescriptor) called")
+    Logger.d(TAG, "loadArchiveThreadInternal: openingExternalThread=$openingExternalThread, openingPreviousThread=$openingPreviousThread")
+    
+    if (!openingExternalThread && !openingPreviousThread) {
+      threadFollowHistoryManager.clear()
+    }
+
+    val presenter = threadLayout.presenter
+    val oldThreadDescriptor = threadLayout.presenter.currentChanDescriptor as? ThreadDescriptor
+
+    // CRITICAL: Set archive thread mode BEFORE binding the descriptor to prevent state reset
+    Logger.d(TAG, "loadArchiveThreadInternal: Setting archive thread mode to TRUE BEFORE binding descriptor")
+    presenter.setArchiveThreadMode(true)
+    
+    Logger.d(TAG, "loadArchiveThreadInternal: About to bind descriptor")
+    presenter.bindChanDescriptor(newThreadDescriptor)
+    Logger.d(TAG, "loadArchiveThreadInternal: Descriptor bound, now creating archive load options")
+    
+    val archiveLoadOptions = ChanLoadOptions.forArchiveThread()
+    Logger.d(TAG, "loadArchiveThreadInternal($newThreadDescriptor) calling normalLoad with archiveLoadOptions.bypassFilters=${archiveLoadOptions.bypassFilters}")
+    Logger.d(TAG, "loadArchiveThreadInternal: archiveLoadOptions.chanLoadOption=${archiveLoadOptions.chanLoadOption}")
+    
+    // Immediately load with archive-specific options that bypass filters
+    Logger.d(TAG, "loadArchiveThreadInternal: About to call presenter.normalLoad() with archive bypass enabled")
+    presenter.normalLoad(
+      showLoading = true,
+      chanLoadOptions = archiveLoadOptions
+    )
+    Logger.d(TAG, "loadArchiveThreadInternal: presenter.normalLoad() completed")
+
     this.threadDescriptor = newThreadDescriptor
 
     updateMenuItems()

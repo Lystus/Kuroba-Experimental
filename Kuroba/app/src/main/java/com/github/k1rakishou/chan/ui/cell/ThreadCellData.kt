@@ -68,6 +68,7 @@ class ThreadCellData(
   var defaultMarkedNo: Long? = null
   var defaultSearchQuery = PostCellData.SearchQuery()
   var defaultShowDividerFunc = { postIndex: Int, totalPostsCount: Int -> true }
+  var bypassFilters: Boolean = false
   var error: String? = null
   var lastSeenIndicatorPosition: Int = -1
 
@@ -346,6 +347,7 @@ class ThreadCellData(
             .any { replyTo -> threadPostReplyMap[replyTo] == true },
           isTablet = isTablet,
           isSplitLayout = isSplitLayout,
+          bypassFilters = bypassFilters
         )
 
         postCellData.postCellCallback = postCellCallback

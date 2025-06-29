@@ -33,6 +33,7 @@ import com.github.k1rakishou.chan.R
 import com.github.k1rakishou.chan.controller.Controller
 import com.github.k1rakishou.chan.core.compose.AsyncData
 import com.github.k1rakishou.chan.core.di.component.activity.ActivityComponent
+import com.github.k1rakishou.core_logger.Logger
 import com.github.k1rakishou.chan.core.manager.GlobalWindowInsetsManager
 import com.github.k1rakishou.chan.core.manager.WindowInsetsListener
 import com.github.k1rakishou.chan.ui.compose.ComposeHelpers.simpleVerticalScrollbar
@@ -161,6 +162,7 @@ class BoardArchiveController(
 
       popFromNavControllerWithAction(catalogDescriptor) {
         val threadDescriptor = ChanDescriptor.ThreadDescriptor.create(catalogDescriptor, threadNo)
+        Logger.d(TAG, "BoardArchiveController onThreadClicked: calling callback with $threadDescriptor")
         onThreadClicked(threadDescriptor)
       }
 
@@ -376,6 +378,10 @@ class BoardArchiveController(
         fontSize = 14.sp
       )
     }
+  }
+
+  companion object {
+    private const val TAG = "BoardArchiveController"
   }
 
 }

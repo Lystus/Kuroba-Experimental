@@ -329,10 +329,12 @@ class PostAdapter(
     chanTheme: ChanTheme,
     postIndexedList: List<PostIndexed>,
     postCellDataWidthNoPaddings: Int,
+    bypassFilters: Boolean = false,
     prevScrollPositionData: PreviousThreadScrollPositionData? = null
   ) {
     BackgroundUtils.ensureMainThread()
 
+    threadCellData.bypassFilters = bypassFilters
     threadCellData.updateThreadData(
       postCellCallback = postCellCallback,
       chanDescriptor = chanDescriptor,

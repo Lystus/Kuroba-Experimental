@@ -77,7 +77,8 @@ data class PostCellData(
   val isSavedReply: Boolean,
   val isReplyToSavedReply: Boolean,
   val isTablet: Boolean,
-  val isSplitLayout: Boolean
+  val isSplitLayout: Boolean,
+  val bypassFilters: Boolean = false
 ) {
   var postCellCallback: PostCellInterface.PostCellCallback? = null
 
@@ -155,6 +156,11 @@ data class PostCellData(
     get() = postHideMap[postDescriptor]
   val isPostHidden: Boolean
     get() {
+      // When filters are bypassed (e.g., for archive threads), never hide posts as stubs
+      if (bypassFilters) {
+        return false
+      }
+
       val postHide = chanPostHide
         ?: return false
 
@@ -304,7 +310,8 @@ data class PostCellData(
       isSavedReply = isSavedReply,
       isReplyToSavedReply = isReplyToSavedReply,
       isTablet = isTablet,
-      isSplitLayout = isSplitLayout
+      isSplitLayout = isSplitLayout,
+      bypassFilters = bypassFilters
     ).also { newPostCellData ->
       newPostCellData.postCellCallback = postCellCallback
       newPostCellData.postTitlePrecalculated = postTitlePrecalculated

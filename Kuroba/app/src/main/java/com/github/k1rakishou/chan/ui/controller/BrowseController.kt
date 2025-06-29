@@ -701,7 +701,8 @@ class BrowseController(
       context = context,
       catalogDescriptor = chanDescriptor!! as CatalogDescriptor,
       onThreadClicked = { threadDescriptor ->
-        mainScope.launch { showThread(threadDescriptor, animated = true) }
+        Logger.d(TAG, "BoardArchive onThreadClicked: $threadDescriptor")
+        mainScope.launch { showArchiveThread(threadDescriptor, animated = true) }
       }
     )
 
@@ -928,6 +929,17 @@ class BrowseController(
     )
   }
 
+  suspend fun showArchiveThread(descriptor: ThreadDescriptor, animated: Boolean) {
+    Logger.d(TAG, "showArchiveThread($descriptor, animated=$animated) called")
+    showArchiveThreadInternal(
+      descriptor = descriptor,
+      showThreadOptions = ShowThreadOptions(
+        switchToThreadController = true,
+        pushControllerWithAnimation = animated
+      )
+    )
+  }
+
   override suspend fun showThreadWithoutFocusing(descriptor: ThreadDescriptor, animated: Boolean) {
     showThreadInternal(
       descriptor = descriptor,
@@ -1013,6 +1025,99 @@ class BrowseController(
             context,
             mainControllerCallbacks,
             descriptor
+          )
+
+          navigationController!!.pushController(
+            to = viewThreadController,
+            animated = showThreadOptions.pushControllerWithAnimation
+          )
+        }
+      }
+
+      initialized = true
+    }
+  }
+
+  private fun showArchiveThreadInternal(descriptor: ThreadDescriptor, showThreadOptions: ShowThreadOptions) {
+    mainScope.launch(Dispatchers.Main.immediate) {
+      Logger.d(TAG, "showArchiveThread($descriptor, $showThreadOptions)")
+
+      // The target ThreadViewController is in a split nav
+      // (BrowseController -> ToolbarNavigationController -> SplitNavigationController)
+      var splitNav: SplitNavigationController? = null
+
+      // The target ThreadViewController is in a slide nav
+      // (BrowseController -> SlideController -> ToolbarNavigationController)
+      var slideNav: ThreadSlideController? = null
+      if (doubleNavigationController is SplitNavigationController) {
+        splitNav = doubleNavigationController as SplitNavigationController?
+      }
+
+      if (doubleNavigationController is ThreadSlideController) {
+        slideNav = doubleNavigationController as ThreadSlideController?
+      }
+
+      when {
+        splitNav != null -> {
+          // Create a threadview inside a toolbarnav in the right part of the split layout
+          if (splitNav.getRightController() is StyledToolbarNavigationController) {
+            val navigationController = splitNav.getRightController() as StyledToolbarNavigationController
+            if (navigationController.top is ViewThreadController) {
+              val viewThreadController = navigationController.top as ViewThreadController
+              viewThreadController.loadArchiveThread(descriptor)
+              viewThreadController.onShow()
+              viewThreadController.onGainedFocus(ThreadSlideController.ThreadControllerType.Thread)
+            }
+          } else {
+            val navigationController = StyledToolbarNavigationController(context)
+            splitNav.setRightController(navigationController, showThreadOptions.pushControllerWithAnimation)
+            val viewThreadController = ViewThreadController(context, mainControllerCallbacks, descriptor, isArchiveThread = true)
+            navigationController.pushController(viewThreadController, false)
+            viewThreadController.onGainedFocus(ThreadSlideController.ThreadControllerType.Thread)
+          }
+
+          splitNav.switchToController(
+            leftController = false,
+            animated = showThreadOptions.pushControllerWithAnimation
+          )
+        }
+        slideNav != null -> {
+          Logger.d(TAG, "showArchiveThreadInternal($descriptor) using slideNav")
+          // Create a threadview in the right part of the slide nav *without* a toolbar
+          if (slideNav.getRightController() is ViewThreadController) {
+            Logger.d(TAG, "showArchiveThreadInternal($descriptor) calling existing ViewThreadController.loadArchiveThread")
+            (slideNav.getRightController() as ViewThreadController).loadArchiveThread(descriptor)
+            (slideNav.getRightController() as ViewThreadController).onShow()
+          } else {
+            Logger.d(TAG, "showArchiveThreadInternal($descriptor) creating new ViewThreadController")
+            val viewThreadController = ViewThreadController(
+              context,
+              mainControllerCallbacks,
+              descriptor,
+              isArchiveThread = true
+            )
+
+            slideNav.setRightController(
+              rightController = viewThreadController,
+              animated = showThreadOptions.pushControllerWithAnimation
+            )
+          }
+
+          if (showThreadOptions.switchToThreadController) {
+            slideNav.switchToController(
+              leftController = false,
+              animated = showThreadOptions.pushControllerWithAnimation
+            )
+          }
+        }
+        else -> {
+          // the target ThreadNav must be pushed to the parent nav controller
+          // (BrowseController -> ToolbarNavigationController)
+          val viewThreadController = ViewThreadController(
+            context,
+            mainControllerCallbacks,
+            descriptor,
+            isArchiveThread = true
           )
 
           navigationController!!.pushController(

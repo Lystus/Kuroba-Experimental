@@ -41,10 +41,30 @@ class PostHideHelper(
   suspend fun processPostFilters(
     chanDescriptor: ChanDescriptor,
     posts: List<ChanPost>,
-    additionalPostsToReparse: MutableSet<PostDescriptor>
+    additionalPostsToReparse: MutableSet<PostDescriptor>,
+    bypassFilters: Boolean = false
   ): ModularResult<List<ChanPost>> {
     return withContext(Dispatchers.IO) {
       return@withContext ModularResult.Try {
+        Logger.d(TAG, "processPostFilters($chanDescriptor) called with bypassFilters=$bypassFilters, posts.size=${posts.size}")
+        Logger.d(TAG, "processPostFilters: BYPASS FILTERS = $bypassFilters")
+        
+        // If bypassFilters is true, return all posts unchanged
+        if (bypassFilters) {
+          Logger.d(TAG, "processPostFilters($chanDescriptor) bypassFilters=true, returning all ${posts.size} posts unchanged - FILTERING BYPASSED!")
+          
+          // Log details about the first post (OP) to debug visibility issues
+          val firstPost = posts.firstOrNull()
+          if (firstPost != null) {
+            val isOP = firstPost is com.github.k1rakishou.model.data.post.ChanOriginalPost
+            Logger.d(TAG, "processPostFilters: First post (OP): postNo=${firstPost.postDescriptor.postNo}, isOP=$isOP, isDeleted=${firstPost.isDeleted}")
+          }
+          
+          return@Try posts
+        }
+
+        Logger.d(TAG, "processPostFilters($chanDescriptor) bypassFilters=false, proceeding with normal filtering")
+
         val postDescriptorSet = posts.map { post -> post.postDescriptor }.toSet()
         val postFilterMap = postFilterManager.getManyPostFilters(postDescriptorSet)
         val hiddenPostsLookupMap = postHideManager.getHiddenPostsMap(postDescriptorSet).toMutableMap()
