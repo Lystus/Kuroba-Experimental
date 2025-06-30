@@ -36,6 +36,7 @@ import com.github.k1rakishou.chan.core.di.component.activity.ActivityComponent
 import com.github.k1rakishou.core_logger.Logger
 import com.github.k1rakishou.chan.core.manager.GlobalWindowInsetsManager
 import com.github.k1rakishou.chan.core.manager.WindowInsetsListener
+import com.github.k1rakishou.chan.features.drawer.MainControllerCallbacks
 import com.github.k1rakishou.chan.ui.compose.ComposeHelpers.simpleVerticalScrollbar
 import com.github.k1rakishou.chan.ui.compose.KurobaComposeErrorMessage
 import com.github.k1rakishou.chan.ui.compose.KurobaComposeProgressIndicator
@@ -43,6 +44,7 @@ import com.github.k1rakishou.chan.ui.compose.KurobaComposeText
 import com.github.k1rakishou.chan.ui.compose.LocalChanTheme
 import com.github.k1rakishou.chan.ui.compose.ProvideChanTheme
 import com.github.k1rakishou.chan.ui.compose.search.rememberSimpleSearchStateNullable
+import com.github.k1rakishou.chan.ui.controller.ViewThreadController
 import com.github.k1rakishou.chan.ui.controller.navigation.ToolbarNavigationController
 import com.github.k1rakishou.chan.utils.AppModuleAndroidUtils.getDimen
 import com.github.k1rakishou.chan.utils.AppModuleAndroidUtils.getString
@@ -57,7 +59,7 @@ import javax.inject.Inject
 class BoardArchiveController(
   context: Context,
   private val catalogDescriptor: ChanDescriptor.CatalogDescriptor,
-  private val onThreadClicked: (ChanDescriptor.ThreadDescriptor) -> Unit
+  private val mainControllerCallbacks: MainControllerCallbacks
 ) : Controller(context), WindowInsetsListener, ToolbarNavigationController.ToolbarSearchCallback {
 
   @Inject
@@ -113,6 +115,12 @@ class BoardArchiveController(
     globalWindowInsetsManager.removeInsetsUpdatesListener(this)
   }
 
+  override fun onShow() {
+    super.onShow()
+    // Reset click blocking when returning to the archive view
+    blockClicking = false
+  }
+
   override fun onInsetsChanged() {
     val toolbarHeight = requireToolbarNavController().toolbar?.toolbarHeight
       ?: getDimen(R.dimen.toolbar_height)
@@ -160,11 +168,20 @@ class BoardArchiveController(
 
       viewModel.currentlySelectedThreadNo.value = threadNo
 
-      popFromNavControllerWithAction(catalogDescriptor) {
-        val threadDescriptor = ChanDescriptor.ThreadDescriptor.create(catalogDescriptor, threadNo)
-        Logger.d(TAG, "BoardArchiveController onThreadClicked: calling callback with $threadDescriptor")
-        onThreadClicked(threadDescriptor)
-      }
+      // Create archive thread descriptor and push the thread view to navigation stack
+      val threadDescriptor = ChanDescriptor.ThreadDescriptor.create(catalogDescriptor, threadNo)
+      Logger.d(TAG, "BoardArchiveController onThreadClicked: pushing archive thread view for $threadDescriptor to navigation stack")
+      
+      val viewThreadController = ViewThreadController(
+        context = context,
+        mainControllerCallbacks = mainControllerCallbacks,
+        startingThreadDescriptor = threadDescriptor,
+        isArchiveThread = true
+      )
+      
+      // Use navigation controller to push to the stack so that back navigation works correctly:
+      // Archive Thread -> Back -> Archive View -> Back -> Board View 
+      navigationController!!.pushController(viewThreadController)
 
       blockClicking = true
     }

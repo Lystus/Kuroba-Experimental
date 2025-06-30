@@ -700,10 +700,7 @@ class BrowseController(
     val boardArchiveController = BoardArchiveController(
       context = context,
       catalogDescriptor = chanDescriptor!! as CatalogDescriptor,
-      onThreadClicked = { threadDescriptor ->
-        Logger.d(TAG, "BoardArchive onThreadClicked: $threadDescriptor")
-        mainScope.launch { showArchiveThread(threadDescriptor, animated = true) }
-      }
+      mainControllerCallbacks = mainControllerCallbacks
     )
 
     threadLayout.pushController(boardArchiveController)
