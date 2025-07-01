@@ -883,7 +883,20 @@ class ThreadLayout @JvmOverloads constructor(
         manuallyRestored = false
       )
 
+      // Remove from persistent unhidden list if present
+      val existingUnhiddenList = PersistableChanState.manuallyUnhiddenPosts.get()
+      val postDescriptorString = post.postDescriptor.serializeToString()
+      if (existingUnhiddenList.containsPostString(postDescriptorString)) {
+        val newUnhiddenPostsList = ManuallyUnhiddenPostsList(existingUnhiddenList.postDescriptorStrings.toMutableSet())
+        newUnhiddenPostsList.removePostString(postDescriptorString)
+        PersistableChanState.manuallyUnhiddenPosts.setSync(newUnhiddenPostsList)
+        Logger.d("ThreadLayout", "Removed thread ${post.postDescriptor} from persistent unhidden list")
+      }
+
       postHideManager.create(postHide)
+      
+      // Force a reparse to ensure the hide takes effect immediately
+      presenter.reparsePostsWithReplies(listOf(post.postDescriptor))
       presenter.refreshUI()
 
       val snackbarStringId = if (hide) {
