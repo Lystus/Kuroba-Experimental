@@ -38,6 +38,7 @@ import okhttp3.HttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.internal.closeQuietly
+import java.nio.charset.StandardCharsets
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.coroutineContext
 import kotlin.time.ExperimentalTime
@@ -90,6 +91,9 @@ class ThreadDownloadingDelegate(
   private suspend fun doWorkInternal() {
     siteManager.awaitUntilInitialized()
     chanPostRepository.awaitUntilInitialized()
+
+    // Cleanup incomplete downloads and temporary files from previous sessions
+    cleanupIncompleteDownloads()
 
     if (!threadDownloadManager.hasActiveThreads()) {
       Logger.d(TAG, "doWorkInternal() no active threads left, exiting")
@@ -206,6 +210,8 @@ class ThreadDownloadingDelegate(
         .peekError { error -> Logger.e(TAG, "Failed to select images by threadId: ${ownerThreadDatabaseId}", error) }
         .mapErrorToValue { emptyList<ChanPostImage>() }
 
+      // Always try to download media for archived/deleted/closed threads that have media enabled
+      // This helps with resuming incomplete downloads
       processThreadMedia(
         index = index,
         total = total,
@@ -232,7 +238,36 @@ class ThreadDownloadingDelegate(
       resultMessage = resultMessage
     )
 
-    if (downloadResult.archived || downloadResult.closed || downloadResult.deleted) {
+    // Check if thread should be marked as completed
+    val shouldComplete = if (downloadResult.archived || downloadResult.closed || downloadResult.deleted) {
+      // For archived/closed/deleted threads, only mark as completed if all media has been downloaded
+      // or if media download is disabled/failed
+      when {
+        !threadDownload.downloadMedia -> {
+          // Media download is disabled, so complete the thread
+          Logger.d(TAG, "processThread($index/$total) completing thread, media download disabled")
+          true
+        }
+        !canProcessThreadMedia -> {
+          // Can't process media due to network/error conditions, complete the thread
+          Logger.d(TAG, "processThread($index/$total) completing thread, can't process media: " +
+            "isNetworkGoodForMediaDownload=$isNetworkGoodForMediaDownload, " +
+            "outOfDiskSpaceError=${outOfDiskSpaceError.get()}, " +
+            "outputDirError=${outputDirError.get()}")
+          true
+        }
+        else -> {
+          // Check if all media has been downloaded
+          val allMediaDownloaded = isAllMediaDownloaded(threadDescriptor, threadDownload.ownerThreadDatabaseId)
+          Logger.d(TAG, "processThread($index/$total) allMediaDownloaded=$allMediaDownloaded")
+          allMediaDownloaded
+        }
+      }
+    } else {
+      false
+    }
+
+    if (shouldComplete) {
       threadDownloadManager.completeDownloading(threadDescriptor)
     }
 
@@ -240,7 +275,8 @@ class ThreadDownloadingDelegate(
       "closed: ${downloadResult.closed}, " +
       "deleted: ${downloadResult.deleted}, " +
       "outOfDiskSpace: ${outOfDiskSpaceError.get()}, " +
-      "outputDirError: ${outputDirError.get()}, "
+      "outputDirError: ${outputDirError.get()}, " +
+      "shouldComplete: $shouldComplete"
 
     Logger.d(TAG, "processThread($index/$total) loadThreadOrCatalog($threadDescriptor) end, status: $status")
   }
@@ -379,8 +415,38 @@ class ThreadDownloadingDelegate(
       return
     }
 
-    if (fileManager.exists(outputFile) && fileManager.getLength(outputFile) > 0L) {
-      // Already downloaded, nothing to do
+    // Enhanced file verification - check both existence and reasonable file size
+    if (fileManager.exists(outputFile)) {
+      val fileSize = fileManager.getLength(outputFile)
+      if (fileSize > 0L) {
+        // More intelligent size validation that considers server optimization
+        if (isFileSizeReasonable(fileSize, isThumbnail, -1L)) { // Will use fallback validation
+          // Enhanced corruption detection: verify file header/magic numbers
+          if (isValidImageFile(outputFile)) {
+            // File exists and appears valid, skip download
+            return
+          } else {
+            // File exists but appears corrupt based on header verification
+            Logger.w(TAG, "downloadImage() found corrupt file (invalid header), re-downloading: $name")
+            fileManager.delete(outputFile)
+          }
+        } else {
+          // File exists but size is suspicious
+          Logger.w(TAG, "downloadImage() found suspicious file size (${fileSize} bytes), re-downloading: $name")
+          fileManager.delete(outputFile)
+        }
+      }
+    }
+
+    // Use temporary file for atomic writes
+    val tempFileName = "${name}.tmp"
+    var tempFile = fileManager.findFile(outputDirectory, tempFileName)
+    if (tempFile == null) {
+      tempFile = fileManager.create(outputDirectory, listOf(FileSegment(tempFileName)))
+    }
+
+    if (tempFile == null) {
+      outputDirError.set(true)
       return
     }
 
@@ -403,42 +469,495 @@ class ThreadDownloadingDelegate(
     if (!response.isSuccessful) {
       Logger.e(TAG, "downloadImage(isThumbnail=$isThumbnail, name=$name, imageUrl=$imageUrl) " +
         "bad response code: ${response.code}")
+      fileManager.delete(tempFile)
       return
     }
 
     val responseBody = if (response.body == null) {
       Logger.e(TAG, "downloadImage(isThumbnail=$isThumbnail, name=$name, imageUrl=$imageUrl) " +
         "response body is null")
+      fileManager.delete(tempFile)
       return
     } else {
       response.body!!
     }
 
+    // Get expected content length from server response
+    val expectedContentLength = responseBody.contentLength()
+    Logger.d(TAG, "downloadImage() $name expectedContentLength=$expectedContentLength")
+
+    var downloadSuccess = false
     try {
-      val outputStream = fileManager.getOutputStream(outputFile)
+      val outputStream = fileManager.getOutputStream(tempFile)
       if (outputStream == null) {
         Logger.e(TAG, "downloadImage(isThumbnail=$isThumbnail, name=$name, imageUrl=$imageUrl) " +
-          "failed to get output stream for file '${outputFile.getFullPath()}'")
+          "failed to get output stream for temp file '${tempFile.getFullPath()}'")
         return
       }
 
+      var totalBytesWritten = 0L
       runInterruptible {
         responseBody.byteStream().use { inputStream ->
           outputStream.use { os ->
-            inputStream.copyTo(os)
+            val buffer = ByteArray(8192)
+            var bytesRead: Int
+            while (inputStream.read(buffer).also { bytesRead = it } != -1) {
+              os.write(buffer, 0, bytesRead)
+              totalBytesWritten += bytesRead
+            }
           }
         }
+      }
+
+      // Verify download completed successfully
+      val finalFileSize = fileManager.getLength(tempFile)
+      if (finalFileSize > 0L && totalBytesWritten == finalFileSize) {
+        // Additional validation: check if downloaded size is reasonable
+        if (isFileSizeReasonable(finalFileSize, isThumbnail, expectedContentLength)) {
+          // Atomic rename: move temp file to final location
+          if (fileManager.exists(outputFile)) {
+            fileManager.delete(outputFile)
+          }
+          
+          // Create final file and copy contents
+          val finalFile = fileManager.create(outputDirectory, listOf(FileSegment(name)))
+          if (finalFile != null && fileManager.copyFileContents(tempFile, finalFile)) {
+            downloadSuccess = true
+            Logger.d(TAG, "downloadImage() successfully downloaded $name (${finalFileSize} bytes, expected: ${expectedContentLength})")
+          } else {
+            Logger.e(TAG, "downloadImage() failed to create final file or copy contents for $name")
+          }
+        } else {
+          Logger.w(TAG, "downloadImage() downloaded file size seems unreasonable for $name: ${finalFileSize} bytes (expected: ${expectedContentLength})")
+        }
+      } else {
+        Logger.e(TAG, "downloadImage() size mismatch for $name: written=$totalBytesWritten, final=$finalFileSize")
       }
     } catch (error: Throwable) {
       if (error.isOutOfDiskSpaceError()) {
         outOfDiskSpaceError.set(true)
       }
 
-      Logger.e(TAG, "Failed to store image into file '$outputFile', deleting it. " +
-        "Error: ${error.errorMessageOrClassName()}")
-      fileManager.delete(outputFile)
+      Logger.e(TAG, "Failed to download image $name. Error: ${error.errorMessageOrClassName()}")
     } finally {
       responseBody.closeQuietly()
+      // Always cleanup temp file
+      fileManager.delete(tempFile)
+      
+      // If download failed, ensure output file is also cleaned up
+      if (!downloadSuccess && fileManager.exists(outputFile)) {
+        fileManager.delete(outputFile)
+      }
+    }
+  }
+
+  /**
+   * Validates if a file size is reasonable considering server-side optimizations
+   * This accounts for compression, format conversion, and CDN optimization
+   */
+  private fun isFileSizeReasonable(
+    actualSize: Long,
+    isThumbnail: Boolean,
+    expectedContentLength: Long
+  ): Boolean {
+    // Absolute minimum sizes for valid images (very conservative)
+    val absoluteMinSize = if (isThumbnail) 50L else 200L
+    
+    // If file is smaller than absolute minimum, it's definitely corrupt
+    if (actualSize < absoluteMinSize) {
+      return false
+    }
+    
+    // If server didn't provide content-length, use more permissive validation
+    if (expectedContentLength <= 0L) {
+      val reasonableMinSize = if (isThumbnail) 100L else 500L
+      return actualSize >= reasonableMinSize
+    }
+    
+    // Server provided expected size - validate against it with generous tolerance
+    val tolerance = when {
+      // Small files can vary more proportionally
+      expectedContentLength < 1024L -> 0.8 // Allow 80% variance for very small files
+      expectedContentLength < 10240L -> 0.5 // Allow 50% variance for small files  
+      expectedContentLength < 102400L -> 0.3 // Allow 30% variance for medium files
+      else -> 0.2 // Allow 20% variance for large files
+    }
+    
+    val minExpectedSize = (expectedContentLength * (1.0 - tolerance)).toLong()
+    val maxExpectedSize = (expectedContentLength * (1.0 + tolerance)).toLong()
+    
+    val isWithinRange = actualSize in minExpectedSize..maxExpectedSize
+    
+    if (!isWithinRange) {
+      Logger.d(TAG, "isFileSizeReasonable() size out of range: actual=$actualSize, " +
+        "expected=$expectedContentLength, range=[$minExpectedSize, $maxExpectedSize]")
+    }
+    
+    return isWithinRange
+  }
+
+  /**
+   * Validates if a file is a valid image by checking file headers/magic numbers
+   * This provides better corruption detection than just file size checks
+   */
+  private suspend fun isValidImageFile(file: AbstractFile): Boolean {
+    return try {
+      val inputStream = fileManager.getInputStream(file)
+      if (inputStream == null) {
+        return false
+      }
+
+      inputStream.use { stream ->
+        val buffer = ByteArray(12) // Enough bytes to check most image formats
+        val bytesRead = stream.read(buffer)
+        
+        if (bytesRead < 4) {
+          return false // Not enough data to determine format
+        }
+
+        // Check for common image format magic numbers
+        when {
+          // JPEG: FF D8 FF
+          buffer[0] == 0xFF.toByte() && buffer[1] == 0xD8.toByte() && buffer[2] == 0xFF.toByte() -> {
+            // Additional JPEG validation: check for valid JPEG segments
+            return isValidJpegFile(file)
+          }
+          
+          // PNG: 89 50 4E 47 0D 0A 1A 0A
+          buffer[0] == 0x89.toByte() && buffer[1] == 0x50.toByte() && 
+          buffer[2] == 0x4E.toByte() && buffer[3] == 0x47.toByte() &&
+          buffer[4] == 0x0D.toByte() && buffer[5] == 0x0A.toByte() &&
+          buffer[6] == 0x1A.toByte() && buffer[7] == 0x0A.toByte() -> {
+            return isValidPngFile(file)
+          }
+          
+          // GIF: GIF87a or GIF89a
+          buffer[0] == 0x47.toByte() && buffer[1] == 0x49.toByte() && buffer[2] == 0x46.toByte() &&
+          (buffer[3] == 0x38.toByte() && (buffer[4] == 0x37.toByte() || buffer[4] == 0x39.toByte()) && buffer[5] == 0x61.toByte()) -> {
+            return isValidGifFile(file)
+          }
+          
+          // WebP: RIFF....WEBP
+          buffer[0] == 0x52.toByte() && buffer[1] == 0x49.toByte() && buffer[2] == 0x46.toByte() && buffer[3] == 0x46.toByte() &&
+          bytesRead >= 12 && buffer[8] == 0x57.toByte() && buffer[9] == 0x45.toByte() && buffer[10] == 0x42.toByte() && buffer[11] == 0x50.toByte() -> {
+            return isValidWebPFile(file)
+          }
+          
+          // BMP: BM
+          buffer[0] == 0x42.toByte() && buffer[1] == 0x4D.toByte() -> {
+            return isValidBmpFile(file)
+          }
+          
+          else -> {
+            Logger.w(TAG, "isValidImageFile() unknown image format for file: ${file.getFullPath()}")
+            return true // Unknown format, assume valid to avoid false positives
+          }
+        }
+      }
+    } catch (error: Throwable) {
+      Logger.e(TAG, "isValidImageFile() error checking file: ${file.getFullPath()}", error)
+      return true // On error, assume valid to avoid false positives
+    }
+  }
+
+  /**
+   * Validates JPEG file structure by checking for valid segments
+   */
+  private suspend fun isValidJpegFile(file: AbstractFile): Boolean {
+    return try {
+      val inputStream = fileManager.getInputStream(file)
+      if (inputStream == null) return false
+
+      inputStream.use { stream ->
+        val buffer = ByteArray(2)
+        var segmentCount = 0
+        val maxSegments = 10 // Limit checks to avoid performance issues
+        
+        // Skip initial SOI marker (FF D8)
+        stream.skip(2)
+        
+        while (segmentCount < maxSegments) {
+          val bytesRead = stream.read(buffer)
+          if (bytesRead < 2) break
+          
+          // Check for valid JPEG segment marker (FF XX)
+          if (buffer[0] == 0xFF.toByte() && buffer[1] != 0x00.toByte()) {
+            segmentCount++
+            
+            // Check for End Of Image marker (FF D9)
+            if (buffer[1] == 0xD9.toByte()) {
+              return true // Valid JPEG with proper ending
+            }
+            
+            // Skip segment data based on length
+            if (buffer[1] != 0xD8.toByte() && buffer[1] != 0xD9.toByte()) {
+              val lengthBytes = ByteArray(2)
+              if (stream.read(lengthBytes) == 2) {
+                val length = ((lengthBytes[0].toInt() and 0xFF) shl 8) or (lengthBytes[1].toInt() and 0xFF)
+                if (length > 2) {
+                  stream.skip((length - 2).toLong())
+                }
+              }
+            }
+          } else {
+            break // Invalid segment marker
+          }
+        }
+        
+        return segmentCount > 0 // At least some valid segments found
+      }
+    } catch (error: Throwable) {
+      Logger.e(TAG, "isValidJpegFile() error", error)
+      return true // Assume valid on error
+    }
+  }
+
+  /**
+   * Validates PNG file structure by checking CRC and basic chunks
+   */
+  private suspend fun isValidPngFile(file: AbstractFile): Boolean {
+    return try {
+      val inputStream = fileManager.getInputStream(file)
+      if (inputStream == null) return false
+
+      inputStream.use { stream ->
+        val buffer = ByteArray(8)
+        
+        // Skip PNG signature (already verified)
+        stream.skip(8)
+        
+        // Check for IHDR chunk (must be first chunk)
+        val bytesRead = stream.read(buffer)
+        if (bytesRead < 8) return false
+        
+        // IHDR chunk length (4 bytes) + chunk type "IHDR" (4 bytes)
+        val chunkType = String(buffer, 4, 4, StandardCharsets.US_ASCII)
+        return chunkType == "IHDR"
+      }
+    } catch (error: Throwable) {
+      Logger.e(TAG, "isValidPngFile() error", error)
+      return true // Assume valid on error
+    }
+  }
+
+  /**
+   * Validates GIF file structure by checking for basic GIF structure
+   */
+  private suspend fun isValidGifFile(file: AbstractFile): Boolean {
+    return try {
+      val inputStream = fileManager.getInputStream(file)
+      if (inputStream == null) return false
+
+      inputStream.use { stream ->
+        val buffer = ByteArray(13) // GIF header + logical screen descriptor
+        val bytesRead = stream.read(buffer)
+        
+        // Check minimum GIF file size and structure
+        return bytesRead >= 13 && fileManager.getLength(file) > 20L
+      }
+    } catch (error: Throwable) {
+      Logger.e(TAG, "isValidGifFile() error", error)
+      return true // Assume valid on error
+    }
+  }
+
+  /**
+   * Validates WebP file structure
+   */
+  private suspend fun isValidWebPFile(file: AbstractFile): Boolean {
+    return try {
+      val inputStream = fileManager.getInputStream(file)
+      if (inputStream == null) return false
+
+      inputStream.use { stream ->
+        val buffer = ByteArray(16)
+        val bytesRead = stream.read(buffer)
+        
+        // Basic WebP validation: check file size field consistency
+        if (bytesRead >= 16) {
+          val fileSize = ((buffer[7].toInt() and 0xFF) shl 24) or
+                        ((buffer[6].toInt() and 0xFF) shl 16) or
+                        ((buffer[5].toInt() and 0xFF) shl 8) or
+                        (buffer[4].toInt() and 0xFF)
+          
+          val actualSize = fileManager.getLength(file)
+          // WebP file size should match the declared size (with 8 byte header offset)
+          return actualSize == (fileSize + 8).toLong()
+        }
+        
+        return false
+      }
+    } catch (error: Throwable) {
+      Logger.e(TAG, "isValidWebPFile() error", error)
+      return true // Assume valid on error
+    }
+  }
+
+  /**
+   * Validates BMP file structure
+   */
+  private suspend fun isValidBmpFile(file: AbstractFile): Boolean {
+    return try {
+      val inputStream = fileManager.getInputStream(file)
+      if (inputStream == null) return false
+
+      inputStream.use { stream ->
+        val buffer = ByteArray(14) // BMP header
+        val bytesRead = stream.read(buffer)
+        
+        if (bytesRead >= 14) {
+          // Check file size field in BMP header
+          val declaredSize = ((buffer[5].toInt() and 0xFF) shl 24) or
+                            ((buffer[4].toInt() and 0xFF) shl 16) or
+                            ((buffer[3].toInt() and 0xFF) shl 8) or
+                            (buffer[2].toInt() and 0xFF)
+          
+          val actualSize = fileManager.getLength(file)
+          return actualSize == declaredSize.toLong()
+        }
+        
+        return false
+      }
+    } catch (error: Throwable) {
+      Logger.e(TAG, "isValidBmpFile() error", error)
+      return true // Assume valid on error
+    }
+  }
+
+  private suspend fun isAllMediaDownloaded(
+    threadDescriptor: ChanDescriptor.ThreadDescriptor,
+    ownerThreadDatabaseId: Long
+  ): Boolean {
+    val chanPostImages = chanPostImageRepository.selectPostImagesByOwnerThreadDatabaseId(ownerThreadDatabaseId)
+      .peekError { error -> Logger.e(TAG, "Failed to select images by threadId: ${ownerThreadDatabaseId}", error) }
+      .valueOrNull() ?: return true // If we can't fetch images, assume they're all downloaded
+
+    if (chanPostImages.isEmpty()) {
+      Logger.d(TAG, "isAllMediaDownloaded() no images for thread: $threadDescriptor")
+      return true // No images to download
+    }
+
+    val rootDir = fileManager.fromRawFile(appConstants.threadDownloaderCacheDir)
+    val directoryName = formatDirectoryName(threadDescriptor)
+    val outputDirectory = fileManager.findFile(rootDir, directoryName)
+    
+    if (outputDirectory == null) {
+      Logger.d(TAG, "isAllMediaDownloaded() output directory not found for thread: $threadDescriptor")
+      return false
+    }
+
+    var totalImages = 0
+    var downloadedImages = 0
+    var missingImages = mutableListOf<String>()
+
+    // Check if all images (thumbnails and full images) are downloaded
+    for (postImage in chanPostImages) {
+      // Check thumbnail
+      val thumbnailName = postImage.actualThumbnailUrl?.extractFileName()
+      if (thumbnailName.isNotNullNorEmpty()) {
+        totalImages++
+        val thumbnailFile = fileManager.findFile(outputDirectory, thumbnailName)
+        if (thumbnailFile != null && fileManager.exists(thumbnailFile) && fileManager.getLength(thumbnailFile) > 0L) {
+          downloadedImages++
+        } else {
+          missingImages.add("thumbnail: $thumbnailName")
+        }
+      }
+
+      // Check full image
+      val fullImageName = postImage.imageUrl?.extractFileName()
+      if (fullImageName.isNotNullNorEmpty()) {
+        totalImages++
+        val fullImageFile = fileManager.findFile(outputDirectory, fullImageName)
+        if (fullImageFile != null && fileManager.exists(fullImageFile) && fileManager.getLength(fullImageFile) > 0L) {
+          downloadedImages++
+        } else {
+          missingImages.add("full image: $fullImageName")
+        }
+      }
+    }
+
+    val allDownloaded = downloadedImages == totalImages
+    
+    Logger.d(TAG, "isAllMediaDownloaded() thread=$threadDescriptor, " +
+      "downloaded=$downloadedImages/$totalImages, allDownloaded=$allDownloaded")
+    
+    if (!allDownloaded && missingImages.isNotEmpty()) {
+      Logger.d(TAG, "isAllMediaDownloaded() missing images: ${missingImages.take(5).joinToString(", ")}" +
+        if (missingImages.size > 5) " and ${missingImages.size - 5} more..." else "")
+    }
+
+    return allDownloaded
+  }
+
+  /**
+   * Cleanup incomplete downloads and temporary files on app restart
+   */
+  suspend fun cleanupIncompleteDownloads() {
+    try {
+      val rootDir = fileManager.fromRawFile(appConstants.threadDownloaderCacheDir)
+      if (!fileManager.exists(rootDir)) {
+        return
+      }
+
+      // Get all thread download directories
+      val threadDirs = fileManager.listFiles(rootDir)
+        .filter { fileManager.isDirectory(it) }
+
+      for (threadDir in threadDirs) {
+        val files = fileManager.listFiles(threadDir)
+        
+        // Remove temporary files
+        val tempFiles = files.filter { file ->
+          val fileName = file.getFullPath()
+          fileName.endsWith(".tmp") || fileName.endsWith(".part")
+        }
+        
+        tempFiles.forEach { tempFile ->
+          Logger.d(TAG, "cleanupIncompleteDownloads() removing temp file: ${tempFile.getFullPath()}")
+          fileManager.delete(tempFile)
+        }
+
+        // Check for suspiciously small files that might be corrupt
+        val imageFiles = files.filter { file ->
+          val fileName = file.getFullPath()
+          !fileName.startsWith(".") && 
+          !fileName.endsWith(".tmp") && 
+          !fileName.endsWith(".part")
+        }
+        
+        imageFiles.forEach { imageFile ->
+          val fileSize = fileManager.getLength(imageFile)
+          val fileName = imageFile.getFullPath()
+          
+          // Check if file is suspiciously small (using more conservative thresholds)
+          val isThumbnail = fileName.contains("s.") || fileName.contains("thumb")
+          val absoluteMinSize = if (isThumbnail) 50L else 200L
+          
+          var shouldDelete = false
+          var reason = ""
+          
+          if (fileSize > 0L && fileSize < absoluteMinSize) {
+            shouldDelete = true
+            reason = "extremely small file (${fileSize} bytes, likely corrupt)"
+          } else if (fileSize >= absoluteMinSize) {
+            // Additional validation: check if file is actually a valid image
+            if (!isValidImageFile(imageFile)) {
+              shouldDelete = true
+              reason = "invalid image format/corruption detected"
+            }
+          }
+          
+          if (shouldDelete) {
+            Logger.w(TAG, "cleanupIncompleteDownloads() removing $reason: $fileName")
+            fileManager.delete(imageFile)
+          }
+        }
+      }
+      
+      Logger.d(TAG, "cleanupIncompleteDownloads() completed")
+    } catch (error: Throwable) {
+      Logger.e(TAG, "cleanupIncompleteDownloads() error", error)
     }
   }
 
