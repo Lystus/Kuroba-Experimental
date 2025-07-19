@@ -409,7 +409,8 @@ abstract class ThreadController(
           lastTouchCoordinates = globalWindowInsetsManager.lastTouchCoordinates(),
           mediaViewerOptions = MediaViewerOptions(
             mediaViewerOpenedFromAlbum = false
-          )
+          ),
+          isArchiveThread = threadLayout.presenter.getArchiveThreadMode()
         )
       }
     }

@@ -480,6 +480,14 @@ class ThreadPresenter @Inject constructor(
     }
   }
 
+  /**
+   * Gets the current archive thread mode state.
+   * @return true if this thread is currently in archive mode with filter bypass enabled
+   */
+  fun getArchiveThreadMode(): Boolean {
+    return isArchiveThread
+  }
+
   fun unbindChanDescriptor(isDestroying: Boolean) {
     BackgroundUtils.ensureMainThread()
 

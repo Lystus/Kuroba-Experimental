@@ -95,7 +95,8 @@ sealed class ViewableMediaParcelableHolder {
     val postNoSubNoList: List<PostNoSubNo>?,
     val initialImageUrl: String?,
     val transitionInfo: TransitionInfo?,
-    val mediaViewerOptions: MediaViewerOptions
+    val mediaViewerOptions: MediaViewerOptions,
+    val isArchiveThread: Boolean = false
   ) : ViewableMediaParcelableHolder(), Parcelable {
     @IgnoredOnParcel
     val threadDescriptor by lazy {
@@ -111,7 +112,8 @@ sealed class ViewableMediaParcelableHolder {
         postDescriptorList: List<PostDescriptor>,
         initialImageUrl: String?,
         transitionInfo: TransitionInfo?,
-        mediaViewerOptions: MediaViewerOptions
+        mediaViewerOptions: MediaViewerOptions,
+        isArchiveThread: Boolean = false
       ) : ThreadMediaParcelableHolder {
         // To avoid TransactionTooLargeException
         val postNoSubNoList = if (postDescriptorList.size > MAX_POST_DESCRIPTORS) {
@@ -127,7 +129,8 @@ sealed class ViewableMediaParcelableHolder {
           postNoSubNoList = postNoSubNoList,
           initialImageUrl = initialImageUrl,
           transitionInfo = transitionInfo,
-          mediaViewerOptions = mediaViewerOptions
+          mediaViewerOptions = mediaViewerOptions,
+          isArchiveThread = isArchiveThread
         )
       }
     }

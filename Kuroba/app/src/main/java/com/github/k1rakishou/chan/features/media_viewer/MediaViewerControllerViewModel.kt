@@ -247,7 +247,6 @@ class MediaViewerControllerViewModel : ViewModel() {
   ): MediaViewerControllerState? {
     BackgroundUtils.ensureBackgroundThread()
 
-    val initialPagerIndex = AtomicInteger(0)
     val mediaIndex = AtomicInteger(0)
     val scrollToImageWithUrl = viewableMediaParcelableHolder.initialImageUrl?.toHttpUrlOrNull()
     val postNoSubNoList = viewableMediaParcelableHolder.postNoSubNoList
@@ -270,8 +269,8 @@ class MediaViewerControllerViewModel : ViewModel() {
         chanPost.iteratePostImages { chanPostImage ->
           val viewableMedia = processChanPostImage(
             chanPostImage = chanPostImage,
-            scrollToImageWithUrl = scrollToImageWithUrl,
-            lastViewedIndex = initialPagerIndex,
+            scrollToImageWithUrl = null, // Don't set initial index here
+            lastViewedIndex = AtomicInteger(0), // Dummy value 
             mediaIndex = mediaIndex
           )
 
@@ -290,8 +289,8 @@ class MediaViewerControllerViewModel : ViewModel() {
           chanPost.iteratePostImages { chanPostImage ->
             val viewableMedia = processChanPostImage(
               chanPostImage = chanPostImage,
-              scrollToImageWithUrl = scrollToImageWithUrl,
-              lastViewedIndex = initialPagerIndex,
+              scrollToImageWithUrl = null, // Don't set initial index here
+              lastViewedIndex = AtomicInteger(0), // Dummy value
               mediaIndex = mediaIndex
             )
 
@@ -309,14 +308,33 @@ class MediaViewerControllerViewModel : ViewModel() {
       return null
     }
 
+    // Find the initial index in the unfiltered list first
+    val unfilteredInitialIndex = if (scrollToImageWithUrl != null) {
+      mediaList.indexOfFirst { viewableMedia ->
+        (viewableMedia.mediaLocation as? MediaLocation.Remote)?.url == scrollToImageWithUrl
+      }
+    } else {
+      0
+    }
+
+    Logger.d(TAG, "collectThreadMedia() scrollToImageWithUrl=$scrollToImageWithUrl, " +
+      "unfilteredInitialIndex=$unfilteredInitialIndex, unfilteredMediaCount=${mediaList.size}")
+
+    val shouldBypassFilters = viewableMediaParcelableHolder.isArchiveThread
+    Logger.d(TAG, "collectThreadMedia() isArchiveThread=${viewableMediaParcelableHolder.isArchiveThread}, shouldBypassFilters=$shouldBypassFilters")
+
     val input = FilterOutHiddenImagesUseCase.Input(
       images = mediaList,
-      index = initialPagerIndex.get(),
+      index = if (unfilteredInitialIndex >= 0) unfilteredInitialIndex else 0,
       isOpeningAlbum = false,
-      postDescriptorSelector = { viewableMedia -> viewableMedia.viewableMediaMeta.ownerPostDescriptor }
+      postDescriptorSelector = { viewableMedia -> viewableMedia.viewableMediaMeta.ownerPostDescriptor },
+      shouldBypassFilters = shouldBypassFilters
     )
 
     val output = filterOutHiddenImagesUseCase.filter(input)
+
+    Logger.d(TAG, "collectThreadMedia() filteredMediaCount=${output.images.size}, " +
+      "outputIndex=${output.index}")
 
     val actualInitialPagerIndex = synchronized(this) {
       if (lastPagerIndex >= 0) {
@@ -325,6 +343,8 @@ class MediaViewerControllerViewModel : ViewModel() {
         output.index
       }
     }
+
+    Logger.d(TAG, "collectThreadMedia() actualInitialPagerIndex=$actualInitialPagerIndex")
 
     return MediaViewerControllerState(
       descriptor = viewableMediaParcelableHolder.threadDescriptor,
@@ -339,7 +359,6 @@ class MediaViewerControllerViewModel : ViewModel() {
   ): MediaViewerControllerState? {
     BackgroundUtils.ensureBackgroundThread()
 
-    val initialPagerIndex = AtomicInteger(0)
     val mediaIndex = AtomicInteger(0)
     val mediaList = mutableListWithCap<ViewableMedia>(64)
 
@@ -350,8 +369,8 @@ class MediaViewerControllerViewModel : ViewModel() {
       chanOriginalPost.iteratePostImages { chanPostImage ->
         val viewableMedia = processChanPostImage(
           chanPostImage = chanPostImage,
-          scrollToImageWithUrl = initialImageUrl,
-          lastViewedIndex = initialPagerIndex,
+          scrollToImageWithUrl = null, // Don't set initial index here
+          lastViewedIndex = AtomicInteger(0), // Dummy value
           mediaIndex = mediaIndex
         )
 
@@ -365,9 +384,18 @@ class MediaViewerControllerViewModel : ViewModel() {
       return null
     }
 
+    // Find the initial index in the unfiltered list first
+    val unfilteredInitialIndex = if (initialImageUrl != null) {
+      mediaList.indexOfFirst { viewableMedia ->
+        (viewableMedia.mediaLocation as? MediaLocation.Remote)?.url == initialImageUrl
+      }
+    } else {
+      0
+    }
+
     val input = FilterOutHiddenImagesUseCase.Input(
       images = mediaList,
-      index = initialPagerIndex.get(),
+      index = if (unfilteredInitialIndex >= 0) unfilteredInitialIndex else 0,
       isOpeningAlbum = false,
       postDescriptorSelector = { viewableMedia -> viewableMedia.viewableMediaMeta.ownerPostDescriptor }
     )

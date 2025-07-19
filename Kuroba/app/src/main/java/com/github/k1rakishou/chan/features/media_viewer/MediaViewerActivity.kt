@@ -483,7 +483,8 @@ class MediaViewerActivity : ControllerHostActivity(),
       initialImageUrl: String?,
       transitionThumbnailUrl: String,
       lastTouchCoordinates: Point,
-      mediaViewerOptions: MediaViewerOptions
+      mediaViewerOptions: MediaViewerOptions,
+      isArchiveThread: Boolean = false
     ) {
       Logger.d(TAG, "threadMedia() postDescriptorList.size=${postDescriptorList.size}")
 
@@ -503,7 +504,8 @@ class MediaViewerActivity : ControllerHostActivity(),
                 lastTouchPosX = lastTouchCoordinates.x,
                 lastTouchPosY = lastTouchCoordinates.y,
               ),
-              mediaViewerOptions = mediaViewerOptions
+              mediaViewerOptions = mediaViewerOptions,
+              isArchiveThread = isArchiveThread
             )
           )
         )
