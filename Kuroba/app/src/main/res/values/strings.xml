@@ -1629,4 +1629,28 @@ Actual error: \'%1$s\'</string>
     <string name="controller_image_save_options_cloudflare_options">Cloudflare options</string>
     <string name="controller_image_save_options_cloudflare_cache_bypass_trick">Cloudflare cache bypass trick</string>
 
+    <!-- Thread Import -->
+    <string name="thread_import_from_zip">Import from ZIP</string>
+    <string name="thread_import_title">Import Thread</string>
+    <string name="thread_import_description">Import a thread from a ZIP file</string>
+    <string name="thread_import_from_file">Import from File</string>
+    <string name="thread_import_from_clipboard">Import from Clipboard</string>
+    <string name="thread_import_supported_formats">Supported formats: ZIP files containing HTML and media</string>
+    <string name="thread_import_importing_progress">Importing thread...</string>
+    <string name="thread_import_error_format">Error: Invalid file format or corrupted archive</string>
+    <string name="thread_import_success">Thread imported successfully!</string>
+    <string name="thread_import_success_description">The thread has been successfully imported and is now available in your library.</string>
+    <string name="thread_import_clipboard_empty">Clipboard is empty</string>
+    
+    <!-- Batch Thread Import -->
+    <string name="thread_import_selection_title">Choose Import Method</string>
+    <string name="thread_import_single_file">Import Single ZIP File</string>
+    <string name="thread_import_directory">Import All ZIP Files from Folder</string>
+    <string name="thread_import_directory_scanning">Scanning directory for ZIP files...</string>
+    <string name="thread_import_directory_error">Error importing threads from directory</string>
+    <string name="thread_import_batch_success_format">Successfully imported %d threads!</string>
+    <string name="thread_import_batch_success_description">All selected threads have been successfully imported and are now available in your library.</string>
+    <string name="thread_import_batch_partial_format" formatted="false">Imported %d threads successfully, %d failed</string>
+    <string name="thread_import_batch_partial_description">Some threads were imported successfully, while others failed. Check the logs for details about failed imports.</string>
+
 </resources>

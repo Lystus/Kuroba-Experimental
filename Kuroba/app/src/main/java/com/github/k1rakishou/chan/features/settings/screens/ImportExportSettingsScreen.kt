@@ -5,6 +5,7 @@ import com.github.k1rakishou.chan.R
 import com.github.k1rakishou.chan.core.helper.AppRestarter
 import com.github.k1rakishou.chan.core.helper.DialogFactory
 import com.github.k1rakishou.chan.core.repository.ImportExportRepository
+import com.github.k1rakishou.chan.features.drawer.MainControllerCallbacks
 import com.github.k1rakishou.chan.features.settings.ImportExportScreen
 import com.github.k1rakishou.chan.features.settings.SettingsGroup
 import com.github.k1rakishou.chan.features.settings.screens.delegate.ImportExportSettingsDelegate
@@ -19,6 +20,7 @@ class ImportExportSettingsScreen(
   context: Context,
   coroutineScope: CoroutineScope,
   private val navigationController: NavigationController,
+  private val mainControllerCallbacks: MainControllerCallbacks,
   private val fileChooser: FileChooser,
   private val fileManager: FileManager,
   private val dialogFactory: DialogFactory,
@@ -35,6 +37,7 @@ class ImportExportSettingsScreen(
       context,
       coroutineScope,
       navigationController,
+      mainControllerCallbacks,
       appRestarter,
       fileChooser,
       fileManager,
@@ -100,6 +103,14 @@ class ImportExportSettingsScreen(
           topDescriptionIdFunc = { R.string.import_settings },
           bottomDescriptionIdFunc = { R.string.import_settings_from_a_file },
           callback = { importExportSettingsDelegate.onImportClicked() }
+        )
+
+        group += LinkSettingV2.createBuilder(
+          context = context,
+          identifier =  ImportExportScreen.MainSettingsGroup.ImportThreadSetting,
+          topDescriptionIdFunc = { R.string.thread_import_title },
+          bottomDescriptionIdFunc = { R.string.thread_import_description },
+          callback = { importExportSettingsDelegate.onImportThreadClicked() }
         )
 
         group

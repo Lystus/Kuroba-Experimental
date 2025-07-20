@@ -367,9 +367,23 @@ class LocalArchiveViewModel : BaseViewModel() {
       }
 
       val thumbnailLocation = if (thumbnailOnDiskFile != null && thumbnailOnDiskFile.exists()) {
+        // File exists directly - use local access
         ThreadDownloadThumbnailLocation.Local(thumbnailOnDiskFile)
       } else if (thumbnailUrl != null) {
-        ThreadDownloadThumbnailLocation.Remote(thumbnailUrl)
+        // Check if this is an imported thread with fake domain
+        if (thumbnailUrl.host == "imported-thread.local") {
+          // For imported threads, fallback to constructing direct path
+          thumbnailOnDiskFile?.let { file ->
+            if (file.exists()) {
+              ThreadDownloadThumbnailLocation.Local(file)
+            } else {
+              null
+            }
+          }
+        } else {
+          // Regular remote URL
+          ThreadDownloadThumbnailLocation.Remote(thumbnailUrl)
+        }
       } else {
         null
       }

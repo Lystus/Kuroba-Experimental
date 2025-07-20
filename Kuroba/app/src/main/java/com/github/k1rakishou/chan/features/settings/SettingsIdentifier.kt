@@ -592,6 +592,7 @@ sealed class ImportExportScreen(
 
     object ExportSetting : MainSettingsGroup("export_settings")
     object ImportSetting : MainSettingsGroup("import_settings")
+    object ImportThreadSetting : MainSettingsGroup("import_thread")
 
     companion object : IGroupIdentifier() {
       override fun screenIdentifier(): ScreenIdentifier = ImportExportScreen.screenIdentifier()

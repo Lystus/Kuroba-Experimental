@@ -201,7 +201,11 @@ class StartActivity : ControllerHostActivity(),
       themeEngine.removeListener(this)
 
       if (isDevBuild()) {
-        themeEngine.checkNoListenersLeft()
+        // Delay the check to ensure all views have been detached from window
+        // and their onDetachedFromWindow() methods have been called
+        contentView.post {
+          themeEngine.checkNoListenersLeft()
+        }
       }
     }
   }

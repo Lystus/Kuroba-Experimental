@@ -8,6 +8,8 @@ import com.github.k1rakishou.chan.core.manager.ThreadDownloadManager
 import com.github.k1rakishou.chan.features.media_viewer.MediaLocation
 import com.github.k1rakishou.chan.features.media_viewer.ViewableMedia
 import com.github.k1rakishou.chan.features.media_viewer.media_view.MediaViewContract
+import com.github.k1rakishou.chan.features.thread_downloading.ThreadDownloadingDelegate
+import com.github.k1rakishou.common.extractFileName
 import com.github.k1rakishou.core_logger.Logger
 import com.github.k1rakishou.fsaf.file.ExternalFile
 import com.github.k1rakishou.fsaf.file.RawFile
@@ -28,6 +30,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import java.io.File
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -133,6 +136,7 @@ class ExoPlayerWrapper(
     if (threadDescriptor != null && threadDownloadManager.canUseThreadDownloaderCache(threadDescriptor)) {
       val file = threadDownloadManager.findDownloadedFile(mediaLocation.url, threadDescriptor)
       if (file != null) {
+        Logger.d(TAG, "createMediaSource() using cached file for imported thread: ${file.getFullPath()}")
         // We can, use the cached video
         val videoSource = when (file) {
           is RawFile -> {
@@ -159,9 +163,32 @@ class ExoPlayerWrapper(
           .createMediaSource(MediaItem.fromUri(Uri.parse(urlRaw)))
 
         return MergingMediaSource(videoSource, audioSource)
+      } else {
+        Logger.w(TAG, "createMediaSource() cached file not found for imported thread: ${mediaLocation.url}")
       }
+    } else {
+      Logger.w(TAG, "createMediaSource() cannot use thread downloader cache for: $threadDescriptor")
+    }
 
-      // fallthrough
+    // Special handling for imported threads with fake domain
+    if (threadDescriptor != null && mediaLocation.url.host == "imported-thread.local") {
+      Logger.d(TAG, "createMediaSource() handling imported thread with fake domain")
+      
+      val fileName = mediaLocation.url.extractFileName()
+      if (fileName != null) {
+        // Try to find the file manually in the thread downloader cache
+        val directoryName = ThreadDownloadingDelegate.formatDirectoryName(threadDescriptor)
+        val threadDir = File(File(context.filesDir, "thread_downloader"), directoryName)
+        val videoFile = File(threadDir, fileName)
+        
+        if (videoFile.exists()) {
+          Logger.d(TAG, "createMediaSource() found imported video file: ${videoFile.absolutePath}")
+          return ProgressiveMediaSource.Factory(fileDataSourceFactory)
+            .createMediaSource(MediaItem.fromUri(Uri.parse(videoFile.absolutePath)))
+        } else {
+          Logger.e(TAG, "createMediaSource() imported video file not found: ${videoFile.absolutePath}")
+        }
+      }
     }
 
     // Thread is not downloaded or the file is not cached, check for the sound post link and use
@@ -178,7 +205,8 @@ class ExoPlayerWrapper(
       }
     }
 
-    // There is no sound post link, just use regular remote video source
+    // Last resort: try to load from network (will fail for imported threads with fake domain)
+    Logger.w(TAG, "createMediaSource() falling back to network for: ${mediaLocation.url}")
     return ProgressiveMediaSource.Factory(cachedHttpDataSourceFactory)
       .createMediaSource(MediaItem.fromUri(Uri.parse(mediaLocation.url.toString())))
   }

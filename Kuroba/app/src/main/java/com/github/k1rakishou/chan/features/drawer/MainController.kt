@@ -108,6 +108,7 @@ import com.github.k1rakishou.chan.features.image_saver.ResolveDuplicateImagesCon
 import com.github.k1rakishou.chan.features.search.GlobalSearchController
 import com.github.k1rakishou.chan.features.settings.MainSettingsControllerV2
 import com.github.k1rakishou.chan.features.thread_downloading.LocalArchiveController
+import com.github.k1rakishou.chan.features.thread_downloading.ThreadDownloadingDelegate
 import com.github.k1rakishou.chan.ui.compose.ComposeHelpers.simpleVerticalScrollbar
 import com.github.k1rakishou.chan.ui.compose.ImageLoaderRequest
 import com.github.k1rakishou.chan.ui.compose.ImageLoaderRequestData
@@ -152,6 +153,8 @@ import com.github.k1rakishou.chan.utils.BackgroundUtils
 import com.github.k1rakishou.chan.utils.TimeUtils
 import com.github.k1rakishou.chan.utils.findControllerOrNull
 import com.github.k1rakishou.chan.utils.viewModelByKey
+import com.github.k1rakishou.common.AppConstants
+import com.github.k1rakishou.common.extractFileName
 import com.github.k1rakishou.core_logger.Logger
 import com.github.k1rakishou.core_themes.ChanTheme
 import com.github.k1rakishou.core_themes.ThemeEngine
@@ -162,6 +165,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 import java.util.*
 import javax.inject.Inject
 
@@ -205,6 +209,8 @@ class MainController(
   lateinit var _globalViewStateManager: Lazy<GlobalViewStateManager>
   @Inject
   lateinit var _threadDownloadManager: Lazy<ThreadDownloadManager>
+  @Inject
+  lateinit var appConstants: AppConstants
 
   private val themeEngine: ThemeEngine
     get() = _themeEngine.get()
@@ -1194,13 +1200,49 @@ class MainController(
               transformations = circleCropTransformation
             )
           } else {
-            ImageLoaderRequest(
-              data = ImageLoaderRequestData.Url(
-                httpUrl = navHistoryEntry.threadThumbnailUrl,
-                cacheFileType = CacheFileType.NavHistoryThumbnail
-              ),
-              transformations = circleCropTransformation
-            )
+            // Special handling for imported threads with fake domain
+            val thumbnailUrl = navHistoryEntry.threadThumbnailUrl
+            if (thumbnailUrl.host == "imported-thread.local" && chanDescriptor is ChanDescriptor.ThreadDescriptor) {
+              // For imported threads, try to find the local file directly
+              val fileName = thumbnailUrl.extractFileName()
+              if (fileName != null) {
+                val directoryName = ThreadDownloadingDelegate.formatDirectoryName(chanDescriptor)
+                val localFile = File(File(appConstants.threadDownloaderCacheDir, directoryName), fileName)
+                if (localFile.exists()) {
+                  ImageLoaderRequest(
+                    data = ImageLoaderRequestData.File(localFile),
+                    transformations = circleCropTransformation
+                  )
+                } else {
+                  // Fallback to URL loading if file not found
+                  ImageLoaderRequest(
+                    data = ImageLoaderRequestData.Url(
+                      httpUrl = thumbnailUrl,
+                      cacheFileType = CacheFileType.NavHistoryThumbnail
+                    ),
+                    transformations = circleCropTransformation
+                  )
+                }
+              } else {
+                // Fallback to URL loading if filename extraction fails
+                ImageLoaderRequest(
+                  data = ImageLoaderRequestData.Url(
+                    httpUrl = thumbnailUrl,
+                    cacheFileType = CacheFileType.NavHistoryThumbnail
+                  ),
+                  transformations = circleCropTransformation
+                )
+              }
+            } else {
+              // Regular URL loading for non-imported threads
+              ImageLoaderRequest(
+                data = ImageLoaderRequestData.Url(
+                  httpUrl = thumbnailUrl,
+                  cacheFileType = CacheFileType.NavHistoryThumbnail
+                ),
+                transformations = circleCropTransformation
+              )
+            }
           }
         }
 
@@ -1340,12 +1382,40 @@ class MainController(
       if (navHistoryEntry.isCompositeIconUrl) {
         ImageLoaderRequest(ImageLoaderRequestData.DrawableResource(R.drawable.composition_icon))
       } else {
-        val data = ImageLoaderRequestData.Url(
-          httpUrl = navHistoryEntry.threadThumbnailUrl,
-          cacheFileType = CacheFileType.NavHistoryThumbnail
-        )
-
-        ImageLoaderRequest(data)
+        // Special handling for imported threads with fake domain
+        val thumbnailUrl = navHistoryEntry.threadThumbnailUrl
+        if (thumbnailUrl.host == "imported-thread.local" && chanDescriptor is ChanDescriptor.ThreadDescriptor) {
+          // For imported threads, try to find the local file directly
+          val fileName = thumbnailUrl.extractFileName()
+          if (fileName != null) {
+            val directoryName = ThreadDownloadingDelegate.formatDirectoryName(chanDescriptor)
+            val localFile = File(File(appConstants.threadDownloaderCacheDir, directoryName), fileName)
+            if (localFile.exists()) {
+              ImageLoaderRequest(ImageLoaderRequestData.File(localFile))
+            } else {
+              // Fallback to URL loading if file not found
+              val data = ImageLoaderRequestData.Url(
+                httpUrl = thumbnailUrl,
+                cacheFileType = CacheFileType.NavHistoryThumbnail
+              )
+              ImageLoaderRequest(data)
+            }
+          } else {
+            // Fallback to URL loading if filename extraction fails
+            val data = ImageLoaderRequestData.Url(
+              httpUrl = thumbnailUrl,
+              cacheFileType = CacheFileType.NavHistoryThumbnail
+            )
+            ImageLoaderRequest(data)
+          }
+        } else {
+          // Regular URL loading for non-imported threads
+          val data = ImageLoaderRequestData.Url(
+            httpUrl = thumbnailUrl,
+            cacheFileType = CacheFileType.NavHistoryThumbnail
+          )
+          ImageLoaderRequest(data)
+        }
       }
     }
 

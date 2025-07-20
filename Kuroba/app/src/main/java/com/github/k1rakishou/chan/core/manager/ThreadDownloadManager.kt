@@ -27,6 +27,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl
 import org.joda.time.DateTime
+import java.io.File
 import kotlin.time.ExperimentalTime
 import kotlin.time.measureTime
 
@@ -82,6 +83,48 @@ class ThreadDownloadManager(
     ensureInitialized()
 
     return getStatus(threadDescriptor) == ThreadDownload.Status.Completed
+  }
+
+  suspend fun createCompletedThreadDownload(
+    threadDescriptor: ChanDescriptor.ThreadDescriptor,
+    threadThumbnailUrl: String? = null
+  ): Boolean {
+    ensureInitialized()
+    Logger.d(TAG, "createCompletedThreadDownload() threadDescriptor=$threadDescriptor")
+    
+    val databaseId = chanPostRepository.createEmptyThreadIfNotExists(threadDescriptor)
+      .peekError { error -> Logger.e(TAG, "Failed to get thread database ID", error) }
+      .valueOrNull() ?: -1L
+
+    if (databaseId < 0L) {
+      Logger.e(TAG, "createCompletedThreadDownload() thread not found in database: $threadDescriptor")
+      return false
+    }
+
+    val threadDownload = ThreadDownload(
+      ownerThreadDatabaseId = databaseId,
+      threadDescriptor = threadDescriptor,
+      downloadMedia = true, // Imported threads have media files available
+      status = ThreadDownload.Status.Completed,
+      createdOn = DateTime.now(),
+      threadThumbnailUrl = threadThumbnailUrl,
+      lastUpdateTime = DateTime.now(),
+      downloadResultMsg = null
+    )
+
+    val threadDownloadCreated = threadDownloadRepository.createThreadDownload(threadDownload)
+      .peekError { error -> Logger.e(TAG, "Failed to create completed thread download in the DB", error) }
+      .isValue()
+
+    if (threadDownloadCreated) {
+      mutex.withLock { threadDownloadsMap[threadDownload.threadDescriptor] = threadDownload }
+      _threadDownloadUpdateFlow.emit(Event.CompleteDownload(threadDescriptor))
+      Logger.d(TAG, "createCompletedThreadDownload() successfully created for $threadDescriptor")
+      return true
+    } else {
+      Logger.e(TAG, "createCompletedThreadDownload() failed to create for $threadDescriptor")
+      return false
+    }
   }
 
   suspend fun hasActiveThreads(): Boolean {

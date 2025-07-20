@@ -6,6 +6,7 @@ import android.content.Context;
 
 import com.github.k1rakishou.ChanSettings;
 import com.github.k1rakishou.chan.core.base.okhttp.ProxiedOkHttpClient;
+import com.github.k1rakishou.chan.core.base.okhttp.RealDownloaderOkHttpClient;
 import com.github.k1rakishou.chan.core.base.okhttp.RealProxiedOkHttpClient;
 import com.github.k1rakishou.chan.core.helper.ChanLoadProgressNotifier;
 import com.github.k1rakishou.chan.core.helper.FilterEngine;
@@ -21,6 +22,8 @@ import com.github.k1rakishou.chan.core.manager.SeenPostsManager;
 import com.github.k1rakishou.chan.core.manager.SiteManager;
 import com.github.k1rakishou.chan.core.manager.ThirdEyeManager;
 import com.github.k1rakishou.chan.core.manager.ThreadBookmarkGroupManager;
+import com.github.k1rakishou.chan.core.manager.ThreadDownloadManager;
+import com.github.k1rakishou.chan.features.thread_importing.ThreadImportParser;
 import com.github.k1rakishou.chan.core.site.loader.ChanThreadLoaderCoordinator;
 import com.github.k1rakishou.chan.core.site.loader.internal.usecase.ParsePostsV1UseCase;
 import com.github.k1rakishou.chan.core.site.parser.ReplyParser;
@@ -40,6 +43,8 @@ import com.github.k1rakishou.chan.core.usecase.GetThreadBookmarkGroupIdsUseCase;
 import com.github.k1rakishou.chan.core.usecase.GlobalSearchUseCase;
 import com.github.k1rakishou.chan.core.usecase.ImportBackupFileUseCase;
 import com.github.k1rakishou.chan.core.usecase.ImportFiltersUseCase;
+import com.github.k1rakishou.chan.features.thread_importing.ImportThreadFromZipUseCase;
+import com.github.k1rakishou.chan.features.thread_importing.ImportThreadsFromDirectoryUseCase;
 import com.github.k1rakishou.chan.core.usecase.InstallMpvNativeLibrariesFromGithubUseCase;
 import com.github.k1rakishou.chan.core.usecase.InstallMpvNativeLibrariesFromLocalDirectoryUseCase;
 import com.github.k1rakishou.chan.core.usecase.KurobaSettingsImportUseCase;
@@ -56,9 +61,11 @@ import com.github.k1rakishou.core_themes.ThemeEngine;
 import com.github.k1rakishou.fsaf.FileManager;
 import com.github.k1rakishou.model.repository.ChanCatalogSnapshotRepository;
 import com.github.k1rakishou.model.repository.ChanFilterWatchRepository;
+import com.github.k1rakishou.model.repository.ChanPostImageRepository;
 import com.github.k1rakishou.model.repository.ChanPostRepository;
 import com.github.k1rakishou.model.repository.ChanSavedReplyRepository;
 import com.github.k1rakishou.model.repository.DatabaseMetaRepository;
+import com.github.k1rakishou.model.source.cache.thread.ChanThreadsCache;
 import com.google.gson.Gson;
 import com.squareup.moshi.Moshi;
 
@@ -501,6 +508,56 @@ public class UseCaseModule {
         Logger.deps("YandexImageSearchUseCase");
 
         return new YandexImageSearchUseCase(proxiedOkHttpClient, moshi);
+    }
+
+    @Provides
+    @Singleton
+    public ImportThreadFromZipUseCase provideImportThreadFromZipUseCase(
+            FileManager fileManager,
+            ThreadImportParser threadImportParser,
+            SiteManager siteManager,
+            BoardManager boardManager,
+            ChanThreadManager chanThreadManager,
+            ChanThreadsCache chanThreadsCache,
+            ThreadDownloadManager threadDownloadManager,
+            ChanPostRepository chanPostRepository,
+            ChanPostImageRepository chanPostImageRepository,
+            AppConstants appConstants,
+            RealDownloaderOkHttpClient okHttpClient,
+            ThreadDataPreloader threadDataPreloader,
+            ParsePostsV1UseCase parsePostsV1UseCase
+    ) {
+        Logger.deps("ImportThreadFromZipUseCase");
+
+        return new ImportThreadFromZipUseCase(
+                fileManager,
+                threadImportParser,
+                siteManager,
+                boardManager,
+                chanThreadManager,
+                chanThreadsCache,
+                threadDownloadManager,
+                chanPostRepository,
+                chanPostImageRepository,
+                appConstants,
+                okHttpClient,
+                threadDataPreloader,
+                parsePostsV1UseCase
+        );
+    }
+
+    @Provides
+    @Singleton
+    public ImportThreadsFromDirectoryUseCase provideImportThreadsFromDirectoryUseCase(
+            FileManager fileManager,
+            ImportThreadFromZipUseCase importThreadFromZipUseCase
+    ) {
+        Logger.deps("ImportThreadsFromDirectoryUseCase");
+
+        return new ImportThreadsFromDirectoryUseCase(
+                fileManager,
+                importThreadFromZipUseCase
+        );
     }
 
 }

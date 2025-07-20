@@ -17,6 +17,7 @@ import com.github.k1rakishou.chan.features.setup.CompositeCatalogsSetupControlle
 import com.github.k1rakishou.chan.features.site_archive.BoardArchiveViewModel;
 import com.github.k1rakishou.chan.features.thread_downloading.LocalArchiveViewModel;
 import com.github.k1rakishou.chan.features.thread_downloading.ThreadDownloaderSettingsViewModel;
+import com.github.k1rakishou.chan.features.thread_importing.ThreadImportViewModel;
 import com.github.k1rakishou.chan.ui.captcha.chan4.Chan4CaptchaLayoutViewModel;
 import com.github.k1rakishou.chan.ui.captcha.dvach.DvachCaptchaLayoutViewModel;
 import com.github.k1rakishou.chan.ui.captcha.lynxchan.LynxchanCaptchaLayoutViewModel;
@@ -44,6 +45,7 @@ public abstract class ViewModelComponent {
     public abstract void inject(LynxchanCaptchaLayoutViewModel lynxchanCaptchaLayoutViewModel);
     public abstract void inject(Chan4ReportPostControllerViewModel chan4ReportPostControllerViewModel);
     public abstract void inject(ImageSearchControllerViewModel imageSearchControllerViewModel);
+    public abstract void inject(ThreadImportViewModel threadImportViewModel);
 
     @Subcomponent.Builder
     public interface Builder {

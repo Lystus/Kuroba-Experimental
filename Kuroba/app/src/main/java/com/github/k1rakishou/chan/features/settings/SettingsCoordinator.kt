@@ -216,6 +216,7 @@ class SettingsCoordinator(
       context,
       scope,
       navigationController,
+      mainControllerCallbacks,
       fileChooser,
       fileManager,
       dialogFactory,

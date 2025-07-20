@@ -8,7 +8,9 @@ import com.github.k1rakishou.chan.R
 import com.github.k1rakishou.chan.core.helper.AppRestarter
 import com.github.k1rakishou.chan.core.helper.DialogFactory
 import com.github.k1rakishou.chan.core.repository.ImportExportRepository
+import com.github.k1rakishou.chan.features.drawer.MainControllerCallbacks
 import com.github.k1rakishou.chan.features.thread_downloading.ThreadDownloadingDelegate
+import com.github.k1rakishou.chan.features.thread_importing.ThreadImportController
 import com.github.k1rakishou.chan.ui.controller.LoadingViewController
 import com.github.k1rakishou.chan.ui.controller.navigation.NavigationController
 import com.github.k1rakishou.chan.utils.AppModuleAndroidUtils.getString
@@ -32,6 +34,7 @@ class ImportExportSettingsDelegate(
   private val context: Context,
   private val coroutineScope: CoroutineScope,
   private val navigationController: NavigationController,
+  private val mainControllerCallbacks: MainControllerCallbacks,
   private val appRestarter: AppRestarter,
   private val fileChooser: FileChooser,
   private val fileManager: FileManager,
@@ -209,6 +212,12 @@ class ImportExportSettingsDelegate(
         }
       }
     }
+  }
+
+  fun onImportThreadClicked() {
+    navigationController.presentController(
+      ThreadImportController(context, mainControllerCallbacks)
+    )
   }
 
   companion object {

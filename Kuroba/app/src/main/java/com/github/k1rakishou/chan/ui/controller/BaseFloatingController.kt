@@ -29,7 +29,11 @@ abstract class BaseFloatingController(
   }
 
   override fun onInsetsChanged() {
-    updatePaddings()
+    try {
+      updatePaddings()
+    } catch (e: UninitializedPropertyAccessException) {
+      // View not yet initialized, will be called again after onCreate
+    }
   }
 
   override fun onDestroy() {
@@ -40,24 +44,28 @@ abstract class BaseFloatingController(
   }
 
   private fun updatePaddings() {
-    val horizPadding = if (isTablet()) {
-      HPADDING_TABLET
-    } else {
-      HPADDING
-    }
+    try {
+      val horizPadding = if (isTablet()) {
+        HPADDING_TABLET
+      } else {
+        HPADDING
+      }
 
-    val vertPadding = if (isTablet()) {
-      VPADDING_TABLET
-    } else {
-      VPADDING
-    }
+      val vertPadding = if (isTablet()) {
+        VPADDING_TABLET
+      } else {
+        VPADDING
+      }
 
-    view.updatePaddings(
-      left = horizPadding + globalWindowInsetsManager.left(),
-      right = horizPadding + globalWindowInsetsManager.right(),
-      top = vertPadding + globalWindowInsetsManager.top(),
-      bottom = vertPadding + globalWindowInsetsManager.bottom()
-    )
+      view.updatePaddings(
+        left = horizPadding + globalWindowInsetsManager.left(),
+        right = horizPadding + globalWindowInsetsManager.right(),
+        top = vertPadding + globalWindowInsetsManager.top(),
+        bottom = vertPadding + globalWindowInsetsManager.bottom()
+      )
+    } catch (e: UninitializedPropertyAccessException) {
+      // View not yet initialized, will be called again after onCreate
+    }
   }
 
   override fun onBack(): Boolean {

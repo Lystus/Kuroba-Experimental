@@ -102,6 +102,7 @@ import com.github.k1rakishou.chan.features.thirdeye.AddOrEditBooruController;
 import com.github.k1rakishou.chan.features.thirdeye.ThirdEyeSettingsController;
 import com.github.k1rakishou.chan.features.thread_downloading.LocalArchiveController;
 import com.github.k1rakishou.chan.features.thread_downloading.ThreadDownloaderSettingsController;
+import com.github.k1rakishou.chan.features.thread_importing.ThreadImportController;
 import com.github.k1rakishou.chan.ui.adapter.PostAdapter;
 import com.github.k1rakishou.chan.ui.captcha.CaptchaLayout;
 import com.github.k1rakishou.chan.ui.captcha.GenericWebViewAuthenticationLayout;
@@ -247,6 +248,7 @@ public interface ActivityComponent {
     void inject(GlobalSearchController globalSearchController);
     void inject(SearchResultsController searchResultsController);
     void inject(AddBoardsController addBoardsController);
+
     void inject(BoardsSetupController boardsSetupController);
     void inject(MainSettingsControllerV2 mainSettingsControllerV2);
     void inject(SiteSettingsController siteSettingsController);
@@ -272,6 +274,7 @@ public interface ActivityComponent {
     void inject(SavedPostsController savedPostsController);
     void inject(ThreadDownloaderSettingsController threadDownloaderSettingsController);
     void inject(LocalArchiveController localArchiveController);
+    void inject(ThreadImportController threadImportController);
     void inject(PostOmittedImagesController postOmittedImagesController);
     void inject(ExportBackupOptionsController exportBackupOptionsController);
     void inject(ComposeBoardsController composeBoardsController);
