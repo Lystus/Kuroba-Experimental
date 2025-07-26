@@ -420,7 +420,10 @@ abstract class ThreadController(
     val descriptor = chanDescriptor
       ?: return
 
-    val albumViewController = AlbumViewController(context, descriptor, displayingPostDescriptors)
+    val isArchiveThread = threadLayout.presenter.getArchiveThreadMode()
+    Logger.d(TAG, "showAlbum() isArchiveThread=$isArchiveThread, displayingPostDescriptors.size=${displayingPostDescriptors.size}")
+    
+    val albumViewController = AlbumViewController(context, descriptor, displayingPostDescriptors, isArchiveThread)
     if (!albumViewController.tryCollectingImages(initialImageUrl)) {
       return
     }

@@ -63,6 +63,7 @@ import com.github.k1rakishou.model.data.post.ChanPostImage
 import com.github.k1rakishou.model.util.ChanPostUtils
 import com.github.k1rakishou.persist_state.PersistableChanState.albumLayoutGridMode
 import com.github.k1rakishou.persist_state.PersistableChanState.showAlbumViewsImageDetails
+import com.github.k1rakishou.core_logger.Logger
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import okhttp3.HttpUrl
@@ -71,7 +72,8 @@ import javax.inject.Inject
 class AlbumViewController(
   context: Context,
   private val chanDescriptor: ChanDescriptor,
-  private val displayingPostDescriptors: List<PostDescriptor>
+  private val displayingPostDescriptors: List<PostDescriptor>,
+  private val isArchiveThread: Boolean = false
 ) : Controller(context), RequiresNoBottomNavBar, WindowInsetsListener, ToolbarHeightUpdatesCallback {
   private lateinit var recyclerView: ColorizableGridRecyclerView
 
@@ -312,16 +314,21 @@ class AlbumViewController(
       return false
     }
 
+    Logger.d(TAG, "tryCollectingImages() isArchiveThread=$isArchiveThread, will set shouldBypassFilters=$isArchiveThread")
+
     val input = FilterOutHiddenImagesUseCase.Input(
       images = images,
       index = index,
       isOpeningAlbum = true,
-      postDescriptorSelector = { chanPostImage -> chanPostImage.ownerPostDescriptor }
+      postDescriptorSelector = { chanPostImage -> chanPostImage.ownerPostDescriptor },
+      shouldBypassFilters = isArchiveThread
     )
 
     val output = filterOutHiddenImagesUseCase.filter(input)
     val filteredImages = output.images
     val newIndex = output.index
+
+    Logger.d(TAG, "tryCollectingImages() filtered ${images.size} -> ${filteredImages.size} images (${images.size - filteredImages.size} hidden/removed)")
 
     if (filteredImages.isEmpty()) {
       return false
@@ -448,7 +455,8 @@ class AlbumViewController(
           lastTouchCoordinates = globalWindowInsetsManager.lastTouchCoordinates(),
           mediaViewerOptions = MediaViewerOptions(
             mediaViewerOpenedFromAlbum = true
-          )
+          ),
+          isArchiveThread = isArchiveThread
         )
       }
     }
@@ -569,6 +577,7 @@ class AlbumViewController(
   }
 
   companion object {
+    private const val TAG = "AlbumViewController"
     private val DEFAULT_SPAN_WIDTH = dp(120f)
     private const val ACTION_DOWNLOAD = 0
     private const val ACTION_TOGGLE_LAYOUT_MODE = 1
