@@ -196,16 +196,30 @@ class StartActivity : ControllerHostActivity(),
       startActivityStartupHandlerHelper.onDestroy()
     }
 
+    // Ensure proper cleanup order: controllers first, then activity
+    if (::mainController.isInitialized) {
+      mainController.onDestroy()
+    }
+
     if (::themeEngine.isInitialized) {
-      themeEngine.removeRootView(this)
+      // Remove ourselves as theme listener
       themeEngine.removeListener(this)
+      themeEngine.removeRootView(this)
 
       if (isDevBuild()) {
         // Delay the check to ensure all views have been detached from window
         // and their onDetachedFromWindow() methods have been called
-        contentView.post {
-          themeEngine.checkNoListenersLeft()
-        }
+        contentView.postDelayed({
+          try {
+            themeEngine.checkNoListenersLeft()
+          } catch (e: RuntimeException) {
+            Logger.e(TAG, "Theme listener cleanup check failed", e)
+            // Force cleanup any remaining listeners to prevent memory leaks
+            themeEngine.forceCleanupAllListeners()
+            // Re-throw in debug builds for investigation
+            throw e
+          }
+        }, 150) // Increased delay to ensure proper cleanup
       }
     }
   }

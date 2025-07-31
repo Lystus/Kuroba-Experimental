@@ -18,6 +18,7 @@ import com.github.k1rakishou.chan.utils.AppModuleAndroidUtils
 import com.github.k1rakishou.chan.utils.AppModuleAndroidUtils.getString
 import com.github.k1rakishou.chan.utils.AppModuleAndroidUtils.openLink
 import com.github.k1rakishou.chan.utils.setVisibilityFast
+import com.github.k1rakishou.core_logger.Logger
 import com.google.android.exoplayer2.upstream.DataSource
 
 @SuppressLint("ViewConstructor", "ClickableViewAccessibility")
@@ -135,19 +136,29 @@ class UnsupportedMediaView(
   }
 
   override fun onInterceptTouchEvent(ev: MotionEvent?): Boolean {
-    if (ev != null && closeMediaActionHelper.onInterceptTouchEvent(ev)) {
-      return true
-    }
+    try {
+      if (ev != null && closeMediaActionHelper.onInterceptTouchEvent(ev)) {
+        return true
+      }
 
-    return super.onInterceptTouchEvent(ev)
+      return super.onInterceptTouchEvent(ev)
+    } catch (e: IllegalArgumentException) {
+      Logger.e(TAG, "onInterceptTouchEvent error", e)
+      return false
+    }
   }
 
   override fun onTouchEvent(event: MotionEvent): Boolean {
-    if (closeMediaActionHelper.onTouchEvent(event)) {
-      return true
-    }
+    try {
+      if (closeMediaActionHelper.onTouchEvent(event)) {
+        return true
+      }
 
-    return super.onTouchEvent(event)
+      return super.onTouchEvent(event)
+    } catch (e: IllegalArgumentException) {
+      Logger.e(TAG, "onTouchEvent error", e)
+      return false
+    }
   }
 
   override fun draw(canvas: Canvas) {

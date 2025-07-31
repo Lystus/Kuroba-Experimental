@@ -107,7 +107,12 @@ public class OptionalSwipeViewPager extends ViewPager {
 
     @Override
     public boolean onTouchEvent(MotionEvent ev) {
-        return swipingEnabled && super.onTouchEvent(ev);
+        try {
+            return swipingEnabled && super.onTouchEvent(ev);
+        } catch (IllegalArgumentException ignored) {
+            // Ignore pointer index out of range exceptions that can occur during rapid swiping
+            return false;
+        }
     }
 
     @Override

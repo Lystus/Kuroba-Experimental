@@ -142,9 +142,43 @@ open class ThemeEngine(
     }
 
     val remainingListeners = listeners.values
-      .joinToString { listener -> listener.javaClass.simpleName }
+      .joinToString { listener -> 
+        try {
+          listener.javaClass.simpleName
+        } catch (e: Exception) {
+          "UnknownListener@${listener.hashCode()}"
+        }
+      }
 
-    throw RuntimeException("Not all listeners were removed from the ThemeEngine! remainingListeners=${remainingListeners}")
+    val detailedInfo = listeners.entries.joinToString("\n") { (key, listener) ->
+      try {
+        "  Key: $key -> ${listener.javaClass.name} (hash: ${listener.hashCode()})"
+      } catch (e: Exception) {
+        "  Key: $key -> UnknownListener (hash: ${listener.hashCode()})"
+      }
+    }
+
+    val errorMessage = """
+      Not all listeners were removed from the ThemeEngine! 
+      Total remaining: ${listeners.size}
+      Summary: $remainingListeners
+      
+      Detailed breakdown:
+      $detailedInfo
+    """.trimIndent()
+
+    throw RuntimeException(errorMessage)
+  }
+
+  /**
+   * Force cleanup of all remaining theme listeners. Should only be used during app shutdown.
+   */
+  fun forceCleanupAllListeners() {
+    val listenerCount = listeners.size
+    if (listenerCount > 0) {
+      Logger.w(TAG, "Force cleaning up $listenerCount remaining theme listeners during shutdown")
+      listeners.clear()
+    }
   }
 
   fun toggleTheme() {

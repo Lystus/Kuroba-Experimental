@@ -239,9 +239,14 @@ class MpvVideoMediaView(
         return@setOnTouchListener false
       }
 
-      // Always return true for thumbnails because otherwise gestures won't work with thumbnails
-      gestureDetector.onTouchEvent(event)
-      return@setOnTouchListener true
+      try {
+        // Always return true for thumbnails because otherwise gestures won't work with thumbnails
+        gestureDetector.onTouchEvent(event)
+        return@setOnTouchListener true
+      } catch (e: IllegalArgumentException) {
+        Logger.e(TAG, "thumbnailMediaView onTouchEvent error", e)
+        return@setOnTouchListener false
+      }
     }
 
     actualVideoPlayerView.setOnTouchListener { v, event ->
@@ -249,24 +254,39 @@ class MpvVideoMediaView(
         return@setOnTouchListener false
       }
 
-      return@setOnTouchListener gestureDetector.onTouchEvent(event)
+      try {
+        return@setOnTouchListener gestureDetector.onTouchEvent(event)
+      } catch (e: IllegalArgumentException) {
+        Logger.e(TAG, "actualVideoPlayerView onTouchEvent error", e)
+        return@setOnTouchListener false
+      }
     }
   }
 
   override fun onInterceptTouchEvent(ev: MotionEvent?): Boolean {
-    if (ev != null && closeMediaActionHelper.onInterceptTouchEvent(ev)) {
-      return true
-    }
+    try {
+      if (ev != null && closeMediaActionHelper.onInterceptTouchEvent(ev)) {
+        return true
+      }
 
-    return super.onInterceptTouchEvent(ev)
+      return super.onInterceptTouchEvent(ev)
+    } catch (e: IllegalArgumentException) {
+      Logger.e(TAG, "onInterceptTouchEvent error", e)
+      return false
+    }
   }
 
   override fun onTouchEvent(event: MotionEvent): Boolean {
-    if (closeMediaActionHelper.onTouchEvent(event)) {
-      return true
-    }
+    try {
+      if (closeMediaActionHelper.onTouchEvent(event)) {
+        return true
+      }
 
-    return super.onTouchEvent(event)
+      return super.onTouchEvent(event)
+    } catch (e: IllegalArgumentException) {
+      Logger.e(TAG, "onTouchEvent error", e)
+      return false
+    }
   }
 
   override fun draw(canvas: Canvas) {
@@ -400,8 +420,13 @@ class MpvVideoMediaView(
       return
     }
 
-    actualVideoPlayerView.destroy()
-    actualVideoPlayerView.removeObserver(this)
+    try {
+      actualVideoPlayerView.destroy()
+      actualVideoPlayerView.removeObserver(this)
+    } catch (error: Throwable) {
+      Logger.e(TAG, "Error during MPV player destruction", error)
+      // Continue with cleanup even if destroy fails
+    }
 
     thumbnailMediaView.setVisibilityFast(View.VISIBLE)
     actualVideoPlayerView.setVisibilityFast(GONE)
@@ -448,8 +473,18 @@ class MpvVideoMediaView(
           )
         )
 
-        actualVideoPlayerView.create(context.applicationContext, appConstants)
-        actualVideoPlayerView.addObserver(this@MpvVideoMediaView)
+        try {
+          actualVideoPlayerView.create(context.applicationContext, appConstants)
+          actualVideoPlayerView.addObserver(this@MpvVideoMediaView)
+        } catch (error: Throwable) {
+          Logger.e(TAG, "Failed to create MPV player, falling back to thumbnail", error)
+          // If MPV creation fails, show thumbnail and don't attempt playback
+          actualVideoPlayerViewContainer.setVisibilityFast(GONE)
+          thumbnailMediaView.setVisibilityFast(VISIBLE)
+          mpvErrorMessage.setVisibilityFast(VISIBLE)
+          mpvErrorMessage.text = getString(R.string.mpv_library_load_error, error.errorMessageOrClassName())
+          return@launch
+        }
 
         if (!isLifecycleChange && ChanSettings.videoAlwaysResetToStart.get()) {
           mediaViewState.resetPosition()
