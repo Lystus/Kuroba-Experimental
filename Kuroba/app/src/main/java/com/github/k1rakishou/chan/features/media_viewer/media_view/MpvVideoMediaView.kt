@@ -588,6 +588,9 @@ class MpvVideoMediaView(
         } else {
           actualVideoPlayerView.muteUnmute(false)
         }
+        
+        // Apply video loop setting
+        actualVideoPlayerView.reloadVideoLoopOption()
       }
       MPVLib.mpvEventId.MPV_EVENT_START_FILE -> {
         Logger.d(TAG, "onEvent MPV_EVENT_START_FILE")

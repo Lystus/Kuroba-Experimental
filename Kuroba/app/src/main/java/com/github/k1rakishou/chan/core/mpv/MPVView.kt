@@ -84,6 +84,7 @@ class MPVView(
             MPVLib.mpvSetOptionString("interpolation", "no")
 
             reloadFastVideoDecodeOption()
+            reloadVideoLoopOption()
 
             MPVLib.mpvSetOptionString("vo", "gpu")
             MPVLib.mpvSetOptionString("gpu-context", "android")
