@@ -63,6 +63,7 @@ import com.github.k1rakishou.chan.core.manager.PostFilterManager;
 import com.github.k1rakishou.chan.core.manager.PostHideManager;
 import com.github.k1rakishou.chan.core.manager.PostingLimitationsInfoManager;
 import com.github.k1rakishou.chan.core.manager.PrefetchStateManager;
+import com.github.k1rakishou.chan.core.manager.RateLimitManager;
 import com.github.k1rakishou.chan.core.manager.ReplyManager;
 import com.github.k1rakishou.chan.core.manager.ReportManager;
 import com.github.k1rakishou.chan.core.manager.SavedReplyManager;
@@ -325,6 +326,15 @@ public class ManagerModule {
     public ApplicationVisibilityManager provideApplicationVisibilityManager() {
         Logger.deps("ApplicationVisibilityManager");
         return new ApplicationVisibilityManager();
+    }
+
+    @Provides
+    @Singleton
+    public RateLimitManager provideRateLimitManager(
+            CoroutineScope appScope
+    ) {
+        Logger.deps("RateLimitManager");
+        return new RateLimitManager(appScope);
     }
 
     @Provides
@@ -864,7 +874,8 @@ public class ManagerModule {
             ChanPostImageRepository chanPostImageRepository,
             ThreadDownloaderFileManagerWrapper threadDownloaderFileManagerWrapper,
             ThreadDownloadProgressNotifier threadDownloadProgressNotifier,
-            ThreadDownloaderPersistPostsInDatabaseUseCase threadDownloaderPersistPostsInDatabaseUseCase
+            ThreadDownloaderPersistPostsInDatabaseUseCase threadDownloaderPersistPostsInDatabaseUseCase,
+            RateLimitManager rateLimitManager
     ) {
         Logger.deps("ThreadDownloadingDelegate");
         return new ThreadDownloadingDelegate(
@@ -877,7 +888,8 @@ public class ManagerModule {
                 chanPostImageRepository,
                 threadDownloaderFileManagerWrapper,
                 threadDownloadProgressNotifier,
-                threadDownloaderPersistPostsInDatabaseUseCase
+                threadDownloaderPersistPostsInDatabaseUseCase,
+                rateLimitManager
         );
     }
 

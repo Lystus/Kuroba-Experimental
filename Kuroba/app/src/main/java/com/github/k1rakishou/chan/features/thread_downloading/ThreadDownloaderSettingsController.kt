@@ -12,9 +12,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.material.ExperimentalMaterialApi
+import androidx.compose.material.MaterialTheme
+import androidx.compose.material.Slider
 import androidx.compose.material.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -23,6 +26,7 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.github.k1rakishou.ChanSettings
 import com.github.k1rakishou.chan.R
 import com.github.k1rakishou.chan.core.di.component.activity.ActivityComponent
 import com.github.k1rakishou.chan.ui.compose.KurobaComposeCheckbox
@@ -139,6 +143,49 @@ class ThreadDownloaderSettingsController(
           viewModel.updateDownloadMedia(checked)
         }
       )
+
+      Spacer(modifier = Modifier.height(16.dp))
+
+      var mediaDownloadDelayMs by remember { mutableStateOf(ChanSettings.threadDownloaderMediaDownloadDelayMs.get()) }
+
+      Column(
+        modifier = Modifier
+          .fillMaxWidth()
+          .wrapContentHeight()
+      ) {
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.SpaceBetween,
+          verticalAlignment = Alignment.CenterVertically
+        ) {
+          KurobaComposeText(
+            text = stringResource(id = R.string.thread_downloader_settings_controller_media_delay),
+            fontSize = 14.sp
+          )
+          KurobaComposeText(
+            text = "${mediaDownloadDelayMs}",
+            fontSize = 14.sp,
+            color = LocalChanTheme.current.accentColorCompose
+          )
+        }
+
+        Slider(
+          value = mediaDownloadDelayMs.toFloat(),
+          onValueChange = { newValue ->
+            mediaDownloadDelayMs = newValue.toInt()
+            ChanSettings.threadDownloaderMediaDownloadDelayMs.set(mediaDownloadDelayMs)
+          },
+          valueRange = 0f..5000f,
+          steps = 49, // 100ms increments: 5000/100 - 1
+          modifier = Modifier.fillMaxWidth()
+        )
+
+        KurobaComposeText(
+          text = stringResource(id = R.string.thread_downloader_settings_controller_media_delay_hint),
+          fontSize = 12.sp,
+          color = LocalChanTheme.current.textColorSecondaryCompose
+        )
+      }
     }
   }
 

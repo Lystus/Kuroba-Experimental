@@ -32,7 +32,7 @@ import kotlin.time.ExperimentalTime
 import kotlin.time.measureTime
 
 class ThreadDownloadManager(
-  private val appCostants: AppConstants,
+  private val appConstants: AppConstants,
   private val appScope: CoroutineScope,
   private val _threadDownloaderFileManagerWrapper: Lazy<ThreadDownloaderFileManagerWrapper>,
   private val _threadDownloadRepository: Lazy<ThreadDownloadRepository>,
@@ -87,7 +87,8 @@ class ThreadDownloadManager(
 
   suspend fun createCompletedThreadDownload(
     threadDescriptor: ChanDescriptor.ThreadDescriptor,
-    threadThumbnailUrl: String? = null
+    threadThumbnailUrl: String? = null,
+    createdOn: DateTime? = null
   ): Boolean {
     ensureInitialized()
     Logger.d(TAG, "createCompletedThreadDownload() threadDescriptor=$threadDescriptor")
@@ -106,7 +107,7 @@ class ThreadDownloadManager(
       threadDescriptor = threadDescriptor,
       downloadMedia = true, // Imported threads have media files available
       status = ThreadDownload.Status.Completed,
-      createdOn = DateTime.now(),
+      createdOn = createdOn ?: DateTime.now(),
       threadThumbnailUrl = threadThumbnailUrl,
       lastUpdateTime = DateTime.now(),
       downloadResultMsg = null
@@ -309,7 +310,7 @@ class ThreadDownloadManager(
         .peekError { error -> Logger.e(TAG, "deleteThread(${threadDownload.threadDescriptor}) error", error) }
         .ignore()
 
-      val threadDownloaderCacheDir = fileManager.fromRawFile(appCostants.threadDownloaderCacheDir)
+      val threadDownloaderCacheDir = fileManager.fromRawFile(appConstants.threadDownloaderCacheDir)
       val threadDirName = ThreadDownloadingDelegate.formatDirectoryName(threadDownload.threadDescriptor)
 
       val resultDirectory = threadDownloaderCacheDir
@@ -390,7 +391,7 @@ class ThreadDownloadManager(
     }
 
     return withContext(Dispatchers.IO) {
-      val threadDownloaderCacheDir = fileManager.fromRawFile(appCostants.threadDownloaderCacheDir)
+      val threadDownloaderCacheDir = fileManager.fromRawFile(appConstants.threadDownloaderCacheDir)
 
       val resultDirectory = threadDownloaderCacheDir
         .clone(DirectorySegment(ThreadDownloadingDelegate.formatDirectoryName(threadDescriptor)))

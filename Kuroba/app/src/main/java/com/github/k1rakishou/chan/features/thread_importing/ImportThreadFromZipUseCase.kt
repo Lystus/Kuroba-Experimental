@@ -28,6 +28,7 @@ import com.github.k1rakishou.chan.utils.BackgroundUtils
 import com.github.k1rakishou.common.AppConstants
 import com.github.k1rakishou.common.ModularResult
 import com.github.k1rakishou.core_logger.Logger
+import org.joda.time.DateTime
 import com.github.k1rakishou.fsaf.FileManager
 import com.github.k1rakishou.fsaf.file.ExternalFile
 import com.github.k1rakishou.model.data.descriptor.ChanDescriptor
@@ -141,9 +142,14 @@ class ImportThreadFromZipUseCase @Inject constructor(
             // Extract thumbnail URL from the first image in the OP post
             val threadThumbnailUrl = extractThreadThumbnailUrl(chanThread, threadDescriptor)
             
+            // Extract OP post timestamp for proper sorting
+            val opPostTimestamp = chanThread.getOriginalPost()?.timestamp?.let { DateTime(it) }
+            Logger.d(TAG, "OP post timestamp: $opPostTimestamp")
+            
             val registrationSuccess = threadDownloadManager.createCompletedThreadDownload(
                 threadDescriptor = threadDescriptor,
-                threadThumbnailUrl = threadThumbnailUrl
+                threadThumbnailUrl = threadThumbnailUrl,
+                createdOn = opPostTimestamp
             )
             
             if (registrationSuccess) {

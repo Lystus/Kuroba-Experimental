@@ -1,14 +1,18 @@
 package com.github.k1rakishou.chan.features.thread_downloading
 
+import android.widget.Toast
 import com.github.k1rakishou.ChanSettings
+import com.github.k1rakishou.chan.R
 import com.github.k1rakishou.chan.core.base.okhttp.RealDownloaderOkHttpClient
 import com.github.k1rakishou.chan.core.helper.ThreadDownloaderFileManagerWrapper
+import com.github.k1rakishou.chan.core.manager.RateLimitManager
 import com.github.k1rakishou.chan.core.manager.SiteManager
 import com.github.k1rakishou.chan.core.manager.ThreadDownloadManager
 import com.github.k1rakishou.chan.core.site.SiteResolver
 import com.github.k1rakishou.chan.core.usecase.DownloadParams
 import com.github.k1rakishou.chan.core.usecase.ThreadDownloaderPersistPostsInDatabaseUseCase
 import com.github.k1rakishou.chan.utils.AppModuleAndroidUtils
+import com.github.k1rakishou.common.AndroidUtils
 import com.github.k1rakishou.common.AppConstants
 import com.github.k1rakishou.common.ModularResult
 import com.github.k1rakishou.common.errorMessageOrClassName
@@ -54,7 +58,8 @@ class ThreadDownloadingDelegate(
   private val chanPostImageRepository: ChanPostImageRepository,
   private val threadDownloaderFileManagerWrapper: ThreadDownloaderFileManagerWrapper,
   private val threadDownloadProgressNotifier: ThreadDownloadProgressNotifier,
-  private val threadDownloaderPersistPostsInDatabaseUseCase: ThreadDownloaderPersistPostsInDatabaseUseCase
+  private val threadDownloaderPersistPostsInDatabaseUseCase: ThreadDownloaderPersistPostsInDatabaseUseCase,
+  private val rateLimitManager: RateLimitManager
 ) {
   private val fileManager: FileManager
     get() = threadDownloaderFileManagerWrapper.fileManager
@@ -241,25 +246,19 @@ class ThreadDownloadingDelegate(
     // Check if thread should be marked as completed
     val shouldComplete = if (downloadResult.archived || downloadResult.closed || downloadResult.deleted) {
       // For archived/closed/deleted threads, only mark as completed if all media has been downloaded
-      // or if media download is disabled/failed
+      // or if media download is disabled
       when {
         !threadDownload.downloadMedia -> {
           // Media download is disabled, so complete the thread
           Logger.d(TAG, "processThread($index/$total) completing thread, media download disabled")
           true
         }
-        !canProcessThreadMedia -> {
-          // Can't process media due to network/error conditions, complete the thread
-          Logger.d(TAG, "processThread($index/$total) completing thread, can't process media: " +
-            "isNetworkGoodForMediaDownload=$isNetworkGoodForMediaDownload, " +
-            "outOfDiskSpaceError=${outOfDiskSpaceError.get()}, " +
-            "outputDirError=${outputDirError.get()}")
-          true
-        }
         else -> {
-          // Check if all media has been downloaded
+          // Always check if all media has been downloaded, regardless of whether we could
+          // download more media in this run (network conditions, rate limits, etc.)
           val allMediaDownloaded = isAllMediaDownloaded(threadDescriptor, threadDownload.ownerThreadDatabaseId)
-          Logger.d(TAG, "processThread($index/$total) allMediaDownloaded=$allMediaDownloaded")
+          Logger.d(TAG, "processThread($index/$total) archived/closed/deleted thread: " +
+            "allMediaDownloaded=$allMediaDownloaded, canProcessThreadMedia=$canProcessThreadMedia")
           allMediaDownloaded
         }
       }
@@ -293,6 +292,21 @@ class ThreadDownloadingDelegate(
       Logger.d(TAG, "processThreadMedia($index/$total) threadDescriptor=${threadDescriptor}, " +
         "chanPostImages=${chanPostImages.size}, nothing to process")
       return
+    }
+
+    // Check if we're in a rate limit cooldown period
+    if (rateLimitManager.isInCooldown()) {
+      val remainingMs = rateLimitManager.getRemainingCooldown()
+      Logger.w(TAG, "processThreadMedia($index/$total) skipping due to rate limit cooldown " +
+        "(${remainingMs}ms remaining)")
+      return
+    }
+
+    // Apply user-configured delay before starting media downloads
+    val delayMs = ChanSettings.threadDownloaderMediaDownloadDelayMs.get()
+    if (delayMs > 0) {
+      Logger.d(TAG, "processThreadMedia($index/$total) delaying ${delayMs}ms before media downloads")
+      kotlinx.coroutines.delay(delayMs.toLong())
     }
 
     val rootDir = fileManager.fromRawFile(appConstants.threadDownloaderCacheDir)
@@ -467,6 +481,24 @@ class ThreadDownloadingDelegate(
 
     val response = okHttpClient.suspendCall(requestBuilder.build())
     if (!response.isSuccessful) {
+      // Check for rate limiting (HTTP 429)
+      if (response.code == 429) {
+        val retryAfterSeconds = response.header("Retry-After")?.toLongOrNull() ?: 60L
+        val cooldownMs = (retryAfterSeconds * 1000L).toInt()
+        
+        Logger.w(TAG, "downloadImage() rate limited (429), Retry-After: ${retryAfterSeconds}s")
+        rateLimitManager.setCooldown(cooldownMs)
+        
+        // Notify user about rate limit with formatted time
+        val timeFormatted = formatDuration(retryAfterSeconds)
+        val message = AppModuleAndroidUtils.getString(R.string.thread_downloader_rate_limited, timeFormatted)
+        AppModuleAndroidUtils.showToast(AndroidUtils.getAppContext(), message, Toast.LENGTH_LONG)
+        
+        // Clean up and return - the cooldown will prevent further downloads until it expires
+        fileManager.delete(tempFile)
+        return
+      }
+      
       Logger.e(TAG, "downloadImage(isThumbnail=$isThumbnail, name=$name, imageUrl=$imageUrl) " +
         "bad response code: ${response.code}")
       fileManager.delete(tempFile)
@@ -965,6 +997,31 @@ class ThreadDownloadingDelegate(
     private const val TAG = "ThreadDownloadingDelegate"
     private const val NO_MEDIA_FILE_NAME = ".nomedia"
     private const val POSTS_PROCESSED_PROGRESS = 0.2f
+
+    /**
+     * Format duration in seconds to human-readable string.
+     * - Less than 60s: "X seconds"
+     * - 1-59 minutes: "X minutes"
+     * - 1+ hours: "Xh Ym" (e.g., "2h 30m")
+     */
+    private fun formatDuration(seconds: Long): String {
+      return when {
+        seconds < 60 -> "$seconds seconds"
+        seconds < 3600 -> {
+          val minutes = seconds / 60
+          "$minutes minutes"
+        }
+        else -> {
+          val hours = seconds / 3600
+          val minutes = (seconds % 3600) / 60
+          if (minutes > 0) {
+            "${hours}h ${minutes}m"
+          } else {
+            "${hours}h"
+          }
+        }
+      }
+    }
 
     fun formatDirectoryName(threadDescriptor: ChanDescriptor.ThreadDescriptor): String {
       return buildString {
