@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.material.ExperimentalMaterialApi
 import androidx.compose.material.MaterialTheme
 import androidx.compose.material.Slider
+import androidx.compose.material.SliderDefaults
 import androidx.compose.material.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -177,6 +178,11 @@ class ThreadDownloaderSettingsController(
           },
           valueRange = 0f..5000f,
           steps = 49, // 100ms increments: 5000/100 - 1
+          colors = SliderDefaults.colors(
+            thumbColor = LocalChanTheme.current.accentColorCompose,
+            activeTrackColor = LocalChanTheme.current.accentColorCompose,
+            inactiveTrackColor = LocalChanTheme.current.accentColorCompose.copy(alpha = 0.3f)
+          ),
           modifier = Modifier.fillMaxWidth()
         )
 
