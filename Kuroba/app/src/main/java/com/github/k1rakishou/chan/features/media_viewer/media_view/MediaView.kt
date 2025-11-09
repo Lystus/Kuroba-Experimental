@@ -82,6 +82,8 @@ abstract class MediaView<T : ViewableMedia, S : MediaViewState> constructor(
   lateinit var globalWindowInsetsManager: GlobalWindowInsetsManager
   @Inject
   lateinit var threadDownloadManager: ThreadDownloadManager
+  @Inject
+  lateinit var rateLimitManager: com.github.k1rakishou.chan.core.manager.RateLimitManager
 
   private val controllerViewModel by (context as ComponentActivity).viewModels<MediaViewerControllerViewModel>()
 

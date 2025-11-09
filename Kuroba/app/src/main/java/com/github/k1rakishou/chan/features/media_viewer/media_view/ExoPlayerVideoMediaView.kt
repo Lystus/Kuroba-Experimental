@@ -14,6 +14,7 @@ import android.widget.ProgressBar
 import com.github.k1rakishou.ChanSettings
 import com.github.k1rakishou.chan.R
 import com.github.k1rakishou.chan.core.cache.CacheFileType
+import com.github.k1rakishou.chan.core.cache.downloader.FileCacheException
 import com.github.k1rakishou.chan.features.media_viewer.MediaLocation
 import com.github.k1rakishou.chan.features.media_viewer.MediaViewerControllerViewModel
 import com.github.k1rakishou.chan.features.media_viewer.ViewableMedia
@@ -277,10 +278,8 @@ class ExoPlayerVideoMediaView(
           Logger.e(TAG, "onFullVideoLoadingError()", error)
 
           if (error.isExceptionImportant() && shown) {
-            cancellableToast.showToast(
-              context,
-              getString(R.string.image_failed_video_error, error.errorMessageOrClassName())
-            )
+            val errorMessage = getMediaLoadErrorMessage(error)
+            cancellableToast.showToast(context, errorMessage)
           }
 
           actualVideoPlayerView.setVisibilityFast(View.INVISIBLE)
@@ -598,6 +597,103 @@ class ExoPlayerVideoMediaView(
     override fun onLongPress(e: MotionEvent) {
       onMediaLongClick()
     }
+  }
+
+  private fun getMediaLoadErrorMessage(error: Throwable): String {
+    Logger.d(TAG, "getMediaLoadErrorMessage() error type: ${error.javaClass.simpleName}")
+    
+    // Check if this is a rate limit error (HTTP 429)
+    // The error might be wrapped in ExoPlaybackException, so check the cause chain
+    var currentError: Throwable? = error
+    while (currentError != null) {
+      Logger.d(TAG, "getMediaLoadErrorMessage() Checking error: ${currentError.javaClass.simpleName}")
+      
+      // Check for FileCacheException.HttpCodeException (used by file cache)
+      if (currentError is FileCacheException.HttpCodeException && currentError.statusCode == 429) {
+        Logger.d(TAG, "getMediaLoadErrorMessage() Detected 429 from FileCacheException")
+        return formatRateLimitErrorMessage()
+      }
+      
+      // Check for ExoPlayer's HttpDataSource.InvalidResponseCodeException
+      val className = currentError.javaClass.name
+      if (className.contains("HttpDataSource") && className.contains("InvalidResponseCodeException")) {
+        try {
+          val responseCodeField = currentError.javaClass.getField("responseCode")
+          val responseCode = responseCodeField.getInt(currentError)
+          Logger.d(TAG, "getMediaLoadErrorMessage() ExoPlayer HTTP response code: $responseCode")
+          
+          if (responseCode == 429) {
+            Logger.d(TAG, "getMediaLoadErrorMessage() Detected 429 from ExoPlayer, formatting friendly message")
+            return formatRateLimitErrorMessage()
+          }
+        } catch (e: Exception) {
+          Logger.e(TAG, "getMediaLoadErrorMessage() Failed to extract response code", e)
+        }
+      }
+      
+      currentError = currentError.cause
+    }
+    
+    // For other errors, use the original message
+    Logger.d(TAG, "getMediaLoadErrorMessage() Using default error message")
+    return getString(R.string.image_failed_video_error, error.errorMessageOrClassName())
+  }
+  
+  private fun formatRateLimitErrorMessage(): String {
+    Logger.d(TAG, "formatRateLimitErrorMessage() Starting to format rate limit message")
+    
+    // Get site descriptor from the media URL
+    val location = viewableMedia.mediaLocation
+    Logger.d(TAG, "formatRateLimitErrorMessage() mediaLocation type: ${location.javaClass.simpleName}")
+    
+    if (location !is MediaLocation.Remote) {
+      Logger.d(TAG, "formatRateLimitErrorMessage() Not a remote location, using generic message")
+      return getString(R.string.image_failed_video_rate_limited_generic)
+    }
+    
+    val url = location.url.toString()
+    Logger.d(TAG, "formatRateLimitErrorMessage() URL: $url")
+    
+    val siteDescriptor = when {
+      url.contains("4cdn.org") || url.contains("4chan.org") -> 
+        com.github.k1rakishou.model.data.descriptor.SiteDescriptor.create("4chan")
+      url.contains("8kun.top") || url.contains("8chan.") -> 
+        com.github.k1rakishou.model.data.descriptor.SiteDescriptor.create("8kun")
+      else -> null
+    }
+    
+    Logger.d(TAG, "formatRateLimitErrorMessage() Detected site: ${siteDescriptor?.siteName ?: "unknown"}")
+    
+    // Get remaining time from rate limit manager
+    if (siteDescriptor == null) {
+      Logger.d(TAG, "formatRateLimitErrorMessage() Site descriptor is null, using generic message")
+      return getString(R.string.image_failed_video_rate_limited_generic)
+    }
+    
+    val cooldownInfo = rateLimitManager.getCooldownInfo(siteDescriptor)
+    Logger.d(TAG, "formatRateLimitErrorMessage() Cooldown info: $cooldownInfo")
+    
+    if (cooldownInfo == null) {
+      Logger.d(TAG, "formatRateLimitErrorMessage() No cooldown info found, using generic message")
+      return getString(R.string.image_failed_video_rate_limited_generic)
+    }
+    
+    val now = org.joda.time.DateTime.now()
+    val remainingMillis = cooldownInfo.endTime.millis - now.millis
+    val remainingSeconds = (remainingMillis / 1000).toInt().coerceAtLeast(0)
+    val minutes = remainingSeconds / 60
+    val seconds = remainingSeconds % 60
+    val timeFormatted = if (minutes > 0) {
+      String.format("%d:%02d", minutes, seconds)
+    } else {
+      String.format("0:%02d", seconds)
+    }
+    
+    return getString(
+      R.string.image_failed_video_rate_limited,
+      siteDescriptor.siteName,
+      timeFormatted
+    )
   }
 
   companion object {
