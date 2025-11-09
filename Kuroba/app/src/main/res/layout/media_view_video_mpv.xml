@@ -27,11 +27,14 @@
     <TextView
         android:id="@+id/error_message"
         android:layout_width="match_parent"
-        android:layout_height="match_parent"
+        android:layout_height="wrap_content"
         android:textColor="#fff"
         android:textSize="16sp"
-        android:padding="4dp"
-        android:gravity="center_vertical"
+        android:padding="16dp"
+        android:gravity="center"
+        android:layout_gravity="center"
+        android:maxLines="10"
+        android:scrollbars="vertical"
         android:visibility="gone"/>
 
     <com.github.k1rakishou.chan.features.media_viewer.strip.MediaViewerLeftActionStrip

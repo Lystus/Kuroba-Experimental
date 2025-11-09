@@ -279,7 +279,7 @@ class ExoPlayerVideoMediaView(
 
           if (error.isExceptionImportant() && shown) {
             val errorMessage = getMediaLoadErrorMessage(error)
-            cancellableToast.showToast(context, errorMessage)
+            cancellableToast.showToast(context, errorMessage, android.widget.Toast.LENGTH_LONG)
           }
 
           actualVideoPlayerView.setVisibilityFast(View.INVISIBLE)
