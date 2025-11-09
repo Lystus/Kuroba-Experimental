@@ -294,11 +294,19 @@ class ThreadDownloadingDelegate(
       return
     }
 
-    // Check if we're in a rate limit cooldown period
-    if (rateLimitManager.isInCooldown()) {
-      val remainingMs = rateLimitManager.getRemainingCooldown()
+    // Check if we're in a rate limit cooldown period for this site
+    val siteDescriptor = threadDescriptor.siteDescriptor()
+    if (rateLimitManager.isInCooldown(siteDescriptor)) {
+      val remainingDuration = rateLimitManager.getRemainingCooldown(siteDescriptor)
+      val remainingSeconds = remainingDuration?.standardSeconds ?: 0
       Logger.w(TAG, "processThreadMedia($index/$total) skipping due to rate limit cooldown " +
-        "(${remainingMs}ms remaining)")
+        "for site=${siteDescriptor.siteName} (${remainingSeconds}s remaining)")
+      
+      // Update thread status to indicate partial download (posts downloaded, media skipped)
+      threadDownloadManager.onDownloadProcessed(
+        threadDescriptor = threadDescriptor,
+        resultMessage = "Rate limited - media download paused (${remainingSeconds}s)"
+      )
       return
     }
 
@@ -366,6 +374,7 @@ class ThreadDownloadingDelegate(
 
       if (thumbnailUrl != null && thumbnailName.isNotNullNorEmpty()) {
         downloadImage(
+          threadDescriptor = threadDescriptor,
           outputDirectory = outputDirectory,
           isThumbnail = true,
           name = thumbnailName,
@@ -389,6 +398,7 @@ class ThreadDownloadingDelegate(
 
       if (fullImageUrl != null && fullImageName.isNotNullNorEmpty()) {
         downloadImage(
+          threadDescriptor = threadDescriptor,
           outputDirectory = outputDirectory,
           isThumbnail = false,
           name = fullImageName,
@@ -412,6 +422,7 @@ class ThreadDownloadingDelegate(
   }
 
   private suspend fun downloadImage(
+    threadDescriptor: ChanDescriptor.ThreadDescriptor,
     outputDirectory: AbstractFile,
     isThumbnail: Boolean,
     name: String,
@@ -483,15 +494,22 @@ class ThreadDownloadingDelegate(
     if (!response.isSuccessful) {
       // Check for rate limiting (HTTP 429)
       if (response.code == 429) {
-        val retryAfterSeconds = response.header("Retry-After")?.toLongOrNull() ?: 60L
-        val cooldownMs = (retryAfterSeconds * 1000L).toInt()
+        val retryAfterSeconds = response.header("Retry-After")?.toLongOrNull()?.toInt() ?: 60
         
-        Logger.w(TAG, "downloadImage() rate limited (429), Retry-After: ${retryAfterSeconds}s")
-        rateLimitManager.setCooldown(cooldownMs)
+        val siteDescriptor = threadDescriptor.siteDescriptor()
+        Logger.w(TAG, "downloadImage() rate limited (429) for site=${siteDescriptor.siteName}, " +
+          "Retry-After: ${retryAfterSeconds}s")
+        
+        rateLimitManager.setCooldown(siteDescriptor, retryAfterSeconds)
         
         // Notify user about rate limit with formatted time
-        val timeFormatted = formatDuration(retryAfterSeconds)
-        val message = AppModuleAndroidUtils.getString(R.string.thread_downloader_rate_limited, timeFormatted)
+        val siteName = siteDescriptor.siteName
+        val timeFormatted = formatDuration(retryAfterSeconds.toLong())
+        val message = AppModuleAndroidUtils.getString(
+          R.string.thread_downloader_rate_limited, 
+          siteName,
+          timeFormatted
+        )
         AppModuleAndroidUtils.showToast(AndroidUtils.getAppContext(), message, Toast.LENGTH_LONG)
         
         // Clean up and return - the cooldown will prevent further downloads until it expires

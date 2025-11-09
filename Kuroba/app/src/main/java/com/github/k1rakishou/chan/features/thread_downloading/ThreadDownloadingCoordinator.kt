@@ -24,11 +24,15 @@ class ThreadDownloadingCoordinator(
   private val appContext: Context,
   private val appScope: CoroutineScope,
   private val appConstants: AppConstants,
-  private val _threadDownloadManager: Lazy<ThreadDownloadManager>
+  private val _threadDownloadManager: Lazy<ThreadDownloadManager>,
+  private val _rateLimitManager: Lazy<com.github.k1rakishou.chan.core.manager.RateLimitManager>
 ) {
 
   private val threadDownloadManager: ThreadDownloadManager
     get() = _threadDownloadManager.get()
+  
+  private val rateLimitManager: com.github.k1rakishou.chan.core.manager.RateLimitManager
+    get() = _rateLimitManager.get()
 
   fun initialize() {
     appScope.launch {
@@ -41,6 +45,19 @@ class ThreadDownloadingCoordinator(
       ChanSettings.threadDownloaderUpdateInterval.listenForChanges()
         .asFlow()
         .collect { startOrRestartThreadDownloading(appContext, appConstants, eager = true) }
+    }
+    
+    // Auto-retry downloads when cooldown expires
+    appScope.launch {
+      rateLimitManager.cooldownExpiredFlow.collect { siteDescriptor ->
+        Logger.d(TAG, "Cooldown expired for site=${siteDescriptor.siteName}, " +
+          "checking if downloads should resume")
+        
+        if (threadDownloadManager.hasActiveThreads()) {
+          Logger.d(TAG, "Active threads found, restarting downloads")
+          startOrRestartThreadDownloading(appContext, appConstants, eager = true)
+        }
+      }
     }
   }
 

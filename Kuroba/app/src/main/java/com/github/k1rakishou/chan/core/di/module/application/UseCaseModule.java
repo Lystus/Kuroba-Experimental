@@ -17,6 +17,7 @@ import com.github.k1rakishou.chan.core.manager.ChanThreadManager;
 import com.github.k1rakishou.chan.core.manager.ChanThreadViewableInfoManager;
 import com.github.k1rakishou.chan.core.manager.PostFilterManager;
 import com.github.k1rakishou.chan.core.manager.PostHideManager;
+import com.github.k1rakishou.chan.core.manager.RateLimitManager;
 import com.github.k1rakishou.chan.core.manager.SavedReplyManager;
 import com.github.k1rakishou.chan.core.manager.SeenPostsManager;
 import com.github.k1rakishou.chan.core.manager.SiteManager;
@@ -306,7 +307,8 @@ public class UseCaseModule {
             Lazy<ChanThreadLoaderCoordinator> chanThreadLoaderCoordinator,
             ParsePostsV1UseCase parsePostsV1UseCase,
             ChanPostRepository chanPostRepository,
-            RealProxiedOkHttpClient proxiedOkHttpClient
+            RealProxiedOkHttpClient proxiedOkHttpClient,
+            RateLimitManager rateLimitManager
     ) {
         Logger.deps("ThreadDownloaderPersistPostsInDatabaseUseCase");
         return new ThreadDownloaderPersistPostsInDatabaseUseCase(
@@ -314,7 +316,8 @@ public class UseCaseModule {
                 chanThreadLoaderCoordinator,
                 parsePostsV1UseCase,
                 chanPostRepository,
-                proxiedOkHttpClient
+                proxiedOkHttpClient,
+                rateLimitManager
         );
     }
 

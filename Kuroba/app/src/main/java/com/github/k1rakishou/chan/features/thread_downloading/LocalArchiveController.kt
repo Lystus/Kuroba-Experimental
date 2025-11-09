@@ -93,6 +93,7 @@ import com.github.k1rakishou.core_themes.ThemeEngine
 import com.github.k1rakishou.fsaf.FileChooser
 import com.github.k1rakishou.fsaf.callback.directory.DirectoryChooserCallback
 import com.github.k1rakishou.model.data.descriptor.ChanDescriptor
+import com.github.k1rakishou.model.data.descriptor.SiteDescriptor
 import com.github.k1rakishou.model.data.thread.ThreadDownload
 import com.github.k1rakishou.model.util.ChanPostUtils
 import kotlinx.coroutines.CoroutineStart
@@ -123,6 +124,10 @@ class LocalArchiveController(
   lateinit var fileChooser: FileChooser
   @Inject
   lateinit var globalWindowInsetsManager: GlobalWindowInsetsManager
+  @Inject
+  lateinit var rateLimitManager: com.github.k1rakishou.chan.core.manager.RateLimitManager
+  @Inject
+  lateinit var okHttpClient: dagger.Lazy<com.github.k1rakishou.chan.core.base.okhttp.RealDownloaderOkHttpClient>
 
   private val bottomPadding = mutableStateOf(0)
   private val viewModel by lazy { requireComponentActivity().viewModelByKey<LocalArchiveViewModel>() }
@@ -151,6 +156,73 @@ class LocalArchiveController(
           if (!viewModel.hasNotCompletedDownloads()) {
             showToast(getString(R.string.controller_local_archive_no_threads_to_update))
             return@launch
+          }
+
+          // Check if any site is in cooldown and validate status
+          // CRITICAL: Must check EACH site individually, not just first one
+          val activeCooldowns = rateLimitManager.getActiveCooldowns()
+          if (activeCooldowns.isNotEmpty()) {
+            val sitesStillRateLimited = mutableListOf<Pair<SiteDescriptor, Int>>()
+            var anyCooldownExpired = false
+            
+            // Validate each rate-limited site individually
+            for ((siteDescriptor, cooldownInfo) in activeCooldowns) {
+              val testUrl = viewModel.getAnyMediaUrlForValidation(siteDescriptor)
+              
+              if (testUrl != null) {
+                // Validate this specific site with its own URL
+                val validationResult = rateLimitManager.validateCooldownStatus(
+                  okHttpClient.get().okHttpClient(),
+                  siteDescriptor,
+                  testUrl
+                )
+                
+                when (validationResult) {
+                  is com.github.k1rakishou.chan.core.manager.RateLimitManager.ValidationResult.StillRateLimited -> {
+                    sitesStillRateLimited.add(siteDescriptor to validationResult.remainingSeconds)
+                  }
+                  is com.github.k1rakishou.chan.core.manager.RateLimitManager.ValidationResult.CooldownExpired -> {
+                    anyCooldownExpired = true
+                    // Site is no longer rate limited, will be cleared by coordinator
+                  }
+                  is com.github.k1rakishou.chan.core.manager.RateLimitManager.ValidationResult.OtherError,
+                  is com.github.k1rakishou.chan.core.manager.RateLimitManager.ValidationResult.NetworkError -> {
+                    // Network error - assume still rate limited with original cooldown
+                    val remainingSeconds = cooldownInfo.getRemainingSeconds()
+                    if (remainingSeconds > 0) {
+                      sitesStillRateLimited.add(siteDescriptor to remainingSeconds)
+                    }
+                  }
+                  com.github.k1rakishou.chan.core.manager.RateLimitManager.ValidationResult.NotInCooldown -> {
+                    // Not in cooldown, continue
+                  }
+                }
+              } else {
+                // No test URL for this site, assume still rate limited
+                val remainingSeconds = cooldownInfo.getRemainingSeconds()
+                if (remainingSeconds > 0) {
+                  sitesStillRateLimited.add(siteDescriptor to remainingSeconds)
+                }
+              }
+            }
+            
+            // Show appropriate message based on results
+            if (sitesStillRateLimited.isNotEmpty()) {
+              // At least one site still rate limited
+              val (siteDescriptor, remainingSeconds) = sitesStillRateLimited.first()
+              val siteName = siteDescriptor.siteName
+              val timeFormatted = formatDuration(remainingSeconds.toLong())
+              
+              if (sitesStillRateLimited.size == 1) {
+                showToast(getString(R.string.thread_downloader_rate_limited_refresh, siteName, timeFormatted))
+              } else {
+                showToast(getString(R.string.thread_downloader_rate_limited_refresh, 
+                  "${sitesStillRateLimited.size} sites", timeFormatted))
+              }
+              return@launch
+            } else if (anyCooldownExpired) {
+              showToast(getString(R.string.thread_downloader_rate_limit_expired))
+            }
           }
 
           ThreadDownloadingCoordinator.startOrRestartThreadDownloading(
@@ -926,6 +998,30 @@ class LocalArchiveController(
     navigation.title = titleString
 
     toolbar.updateTitle(navigation)
+  }
+
+  private fun formatDuration(seconds: Long): String {
+    return when {
+      seconds < 60 -> "$seconds seconds"
+      seconds < 3600 -> {
+        val minutes = seconds / 60
+        "$minutes minutes"
+      }
+      else -> {
+        val hours = seconds / 3600
+        val minutes = (seconds % 3600) / 60
+        if (minutes > 0) {
+          "${hours}h ${minutes}m"
+        } else {
+          "${hours}h"
+        }
+      }
+    }
+  }
+  
+  private fun com.github.k1rakishou.chan.core.manager.RateLimitManager.CooldownInfo.getRemainingSeconds(): Int {
+    val remaining = endTime.millis - org.joda.time.DateTime.now().millis
+    return (remaining / 1000).toInt().coerceAtLeast(0)
   }
 
   companion object {

@@ -1,6 +1,7 @@
 package com.github.k1rakishou.chan.core.usecase
 
 import com.github.k1rakishou.chan.core.base.okhttp.RealProxiedOkHttpClient
+import com.github.k1rakishou.chan.core.manager.RateLimitManager
 import com.github.k1rakishou.chan.core.manager.SiteManager
 import com.github.k1rakishou.chan.core.site.loader.ChanThreadLoaderCoordinator
 import com.github.k1rakishou.chan.core.site.loader.internal.usecase.ParsePostsV1UseCase
@@ -23,7 +24,8 @@ class ThreadDownloaderPersistPostsInDatabaseUseCase(
   private val chanThreadLoaderCoordinator: Lazy<ChanThreadLoaderCoordinator>,
   private val parsePostsV1UseCase: ParsePostsV1UseCase,
   private val chanPostRepository: ChanPostRepository,
-  private val proxiedOkHttpClient: RealProxiedOkHttpClient
+  private val proxiedOkHttpClient: RealProxiedOkHttpClient,
+  private val rateLimitManager: RateLimitManager
 ) : ISuspendUseCase<DownloadParams, ModularResult<DownloadResult>> {
 
   override suspend fun execute(parameter: DownloadParams): ModularResult<DownloadResult> {
@@ -91,6 +93,28 @@ class ThreadDownloaderPersistPostsInDatabaseUseCase(
           deleted = true,
           closed = false,
           archived = false,
+          rateLimited = false,
+          retryAfterSeconds = null,
+          posts = emptyList()
+        )
+      }
+      
+      if (response.code == 429) {
+        // API rate limited - set cooldown and return special result
+        val retryAfterSeconds = response.header("Retry-After")?.toLongOrNull()?.toInt() ?: 60
+        val siteDescriptor = threadDescriptor.siteDescriptor()
+        
+        Logger.w(TAG, "downloadThreadPosts() API rate limited (429) for site=${siteDescriptor.siteName}, " +
+          "Retry-After: ${retryAfterSeconds}s")
+        
+        rateLimitManager.setCooldown(siteDescriptor, retryAfterSeconds)
+        
+        return DownloadResult(
+          deleted = false,
+          closed = false,
+          archived = false,
+          rateLimited = true,
+          retryAfterSeconds = retryAfterSeconds,
           posts = emptyList()
         )
       }
@@ -139,6 +163,8 @@ class ThreadDownloaderPersistPostsInDatabaseUseCase(
       deleted = chanReaderProcessor.deleted,
       closed = chanReaderProcessor.closed,
       archived = chanReaderProcessor.archived,
+      rateLimited = false,
+      retryAfterSeconds = null,
       posts = parsingResult.parsedPosts
     )
   }
@@ -159,5 +185,7 @@ data class DownloadResult(
   val deleted: Boolean,
   val closed: Boolean,
   val archived: Boolean,
+  val rateLimited: Boolean,
+  val retryAfterSeconds: Int?,
   val posts: List<ChanPost>
 )

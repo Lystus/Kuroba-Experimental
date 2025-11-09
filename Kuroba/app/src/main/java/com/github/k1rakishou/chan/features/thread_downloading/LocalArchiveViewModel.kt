@@ -22,6 +22,7 @@ import com.github.k1rakishou.common.extractFileName
 import com.github.k1rakishou.common.mutableListWithCap
 import com.github.k1rakishou.core_logger.Logger
 import com.github.k1rakishou.model.data.descriptor.ChanDescriptor
+import com.github.k1rakishou.model.data.descriptor.SiteDescriptor
 import com.github.k1rakishou.model.data.thread.ThreadDownload
 import com.github.k1rakishou.model.repository.ChanPostImageRepository
 import com.github.k1rakishou.model.repository.ChanPostRepository
@@ -221,6 +222,44 @@ class LocalArchiveViewModel : BaseViewModel() {
 
   suspend fun hasNotCompletedDownloads(): Boolean {
     return threadDownloadManager.notCompletedThreadsCount() > 0
+  }
+  
+  /**
+   * Get any media URL for rate limit validation HEAD request.
+   * Returns the first available image URL from an active download on the specified site.
+   * 
+   * @param siteDescriptor The site to get a test URL for (must match to ensure validation accuracy)
+   * @return HttpUrl from the specified site, or null if none found
+   */
+  suspend fun getAnyMediaUrlForValidation(siteDescriptor: SiteDescriptor): HttpUrl? {
+    return withContext(Dispatchers.Default) {
+      val threadDownloads = threadDownloadManager.getAllActiveThreadDownloads()
+      
+      for (threadDownload in threadDownloads) {
+        // Only check threads from the specified site
+        if (threadDownload.threadDescriptor.siteDescriptor() != siteDescriptor) {
+          continue
+        }
+        
+        val ownerThreadDatabaseId = threadDownload.ownerThreadDatabaseId
+        
+        val images = chanPostImageRepository.selectPostImagesByOwnerThreadDatabaseId(ownerThreadDatabaseId)
+          .valueOrNull()
+        
+        if (!images.isNullOrEmpty()) {
+          val firstImage = images.first()
+          val imageUrl = firstImage.imageUrl
+          
+          if (imageUrl != null) {
+            Logger.d(TAG, "getAnyMediaUrlForValidation() found URL for site ${siteDescriptor.siteName}: $imageUrl")
+            return@withContext imageUrl
+          }
+        }
+      }
+      
+      Logger.w(TAG, "getAnyMediaUrlForValidation() no media URLs found for site ${siteDescriptor.siteName}")
+      return@withContext null
+    }
   }
 
   fun getBottomPanelMenus(): List<BottomMenuPanelItem> {

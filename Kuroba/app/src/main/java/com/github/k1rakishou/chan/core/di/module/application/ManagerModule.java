@@ -331,10 +331,12 @@ public class ManagerModule {
     @Provides
     @Singleton
     public RateLimitManager provideRateLimitManager(
-            CoroutineScope appScope
+            CoroutineScope appScope,
+            Gson gson,
+            Context appContext
     ) {
         Logger.deps("RateLimitManager");
-        return new RateLimitManager(appScope);
+        return new RateLimitManager(appScope, gson, appContext);
     }
 
     @Provides
@@ -851,14 +853,16 @@ public class ManagerModule {
             Context appContext,
             CoroutineScope appScope,
             AppConstants appConstants,
-            Lazy<ThreadDownloadManager> threadDownloadManager
+            Lazy<ThreadDownloadManager> threadDownloadManager,
+            Lazy<RateLimitManager> rateLimitManager
     ) {
         Logger.deps("ThreadDownloadingCoordinator");
         return new ThreadDownloadingCoordinator(
                 appContext,
                 appScope,
                 appConstants,
-                threadDownloadManager
+                threadDownloadManager,
+                rateLimitManager
         );
     }
 
