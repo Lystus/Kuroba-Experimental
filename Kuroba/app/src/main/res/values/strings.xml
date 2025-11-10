@@ -638,6 +638,16 @@ Usually that means that you forgot to remove a space from the beginning or the e
     <string name="setting_thread_downloader_media_metered_network_description">Turning this setting off will disable thread media downloading when not connected to WiFi. Thread posts will still be downloaded.</string>
     <string name="setting_thread_downloader_media_delay">Media download delay</string>
     <string name="setting_thread_downloader_media_delay_description">Delay between each media file download to help avoid rate limits. Default: 1000ms (1 second)</string>
+    <string name="setting_extract_all_metadata">Extract All Metadata</string>
+    <string name="setting_extract_all_metadata_description">Extract duration and audio information for all downloaded thread media files. This is useful for imported threads or old downloads that don\'t have metadata yet.</string>
+    <string name="extract_metadata_confirm_title">Extract All Metadata?</string>
+    <string name="extract_metadata_confirm_description">This will scan all downloaded threads and extract metadata for media files that don\'t have it yet.\n\nThis operation cannot be cancelled once started and may take several minutes depending on how many files you have.\n\nThe app will restart automatically when complete.</string>
+    <string name="extracting_metadata_title">Extracting Metadata</string>
+    <string name="extracting_metadata_progress">Processing %1$d / %2$d files…</string>
+    <string name="extraction_complete_title">Extraction Complete</string>
+    <string name="extraction_complete_description">Successfully extracted metadata for %1$d files.\n%2$d files were skipped (already had metadata or file not found).\n%3$d errors occurred.\n\nThe app will now restart.</string>
+    <string name="extraction_error_title">Extraction Failed</string>
+    <string name="extraction_error_description">An error occurred during metadata extraction: %1$s</string>
 
     <string name="settings_group_about">About</string>
     <string name="settings_update_check">Tap to check for updates</string>

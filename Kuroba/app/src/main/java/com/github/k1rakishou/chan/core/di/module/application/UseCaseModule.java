@@ -563,4 +563,24 @@ public class UseCaseModule {
         );
     }
 
+    @Provides
+    @Singleton
+    public com.github.k1rakishou.chan.core.usecase.ExtractAllMetadataUseCase provideExtractAllMetadataUseCase(
+            AppConstants appConstants,
+            ThreadDownloadManager threadDownloadManager,
+            ChanPostRepository chanPostRepository,
+            com.github.k1rakishou.chan.utils.MediaMetadataExtractor mediaMetadataExtractor,
+            com.github.k1rakishou.model.repository.ChanPostImageMetadataRepository chanPostImageMetadataRepository
+    ) {
+        Logger.deps("ExtractAllMetadataUseCase");
+
+        return new com.github.k1rakishou.chan.core.usecase.ExtractAllMetadataUseCase(
+                appConstants,
+                threadDownloadManager,
+                chanPostRepository,
+                mediaMetadataExtractor,
+                chanPostImageMetadataRepository
+        );
+    }
+
 }

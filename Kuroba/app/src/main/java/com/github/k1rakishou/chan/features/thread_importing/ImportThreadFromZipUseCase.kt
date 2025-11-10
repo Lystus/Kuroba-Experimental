@@ -81,10 +81,31 @@ class ImportThreadFromZipUseCase @Inject constructor(
             
             // Parse the ZIP file
             Logger.d(TAG, "Calling threadImportParser.parseHtmlFromZip()...")
+            
+            // Try to get the actual filename from the file URI if it's a content URI
             val fullPath = zipFile.getFullPath()
             Logger.d(TAG, "Full ZIP path: $fullPath")
-            val filename = java.net.URLDecoder.decode(fullPath, "UTF-8").substringAfterLast("/").substringAfterLast("\\")
-            Logger.d(TAG, "Extracted filename: $filename")
+            
+            val filename = if (fullPath != null && fullPath.startsWith("content://")) {
+                // It's a content URI - need to query ContentResolver for actual filename
+                Logger.d(TAG, "Detected content URI, attempting to extract filename")
+                val uri = zipFile.getUri()
+                Logger.d(TAG, "Got URI from getUri(): $uri")
+                if (uri != null) {
+                    val extractedName = tryExtractFileNameFromUri(uri, parameter.appContext)
+                    Logger.d(TAG, "Extracted filename from URI: $extractedName")
+                    extractedName ?: "unknown.zip"
+                } else {
+                    Logger.w(TAG, "getUri() returned null, cannot extract filename")
+                    "unknown.zip"
+                }
+            } else {
+                java.net.URLDecoder.decode(fullPath ?: "unknown.zip", "UTF-8")
+                    .substringAfterLast("/")
+                    .substringAfterLast("\\")
+            }
+            
+            Logger.d(TAG, "Final extracted filename: $filename")
             val importData = threadImportParser.parseHtmlFromZip(zipFile, filename).unwrap()
             val threadDescriptor = importData.threadDescriptor
             
@@ -460,8 +481,24 @@ class ImportThreadFromZipUseCase @Inject constructor(
         val thumbnailUrl: HttpUrl
     )
     
+    private fun tryExtractFileNameFromUri(uri: android.net.Uri, context: android.content.Context): String? {
+        return try {
+            context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                val nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                if (nameIndex > -1 && cursor.moveToFirst()) {
+                    return@use cursor.getString(nameIndex)
+                }
+                return@use null
+            }
+        } catch (error: Throwable) {
+            Logger.e(TAG, "Failed to extract filename from URI: $uri", error)
+            null
+        }
+    }
+    
     data class Params(
         val zipFile: ExternalFile,
+        val appContext: android.content.Context,
         val onProgress: (ProgressUpdate) -> Unit
     )
     

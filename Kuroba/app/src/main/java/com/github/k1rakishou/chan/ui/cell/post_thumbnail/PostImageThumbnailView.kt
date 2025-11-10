@@ -83,6 +83,8 @@ class PostImageThumbnailView @JvmOverloads constructor(
   @Inject
   lateinit var _chanPostImageMetadataRepository: Lazy<com.github.k1rakishou.model.repository.ChanPostImageMetadataRepository>
   @Inject
+  lateinit var _mediaMetadataExtractor: Lazy<com.github.k1rakishou.chan.utils.MediaMetadataExtractor>
+  @Inject
   lateinit var themeEngine: ThemeEngine
   @Inject
   lateinit var cacheHandler: CacheHandler
@@ -120,6 +122,8 @@ class PostImageThumbnailView @JvmOverloads constructor(
     get() = _threadDownloadManager.get()
   private val chanPostImageMetadataRepository: com.github.k1rakishou.model.repository.ChanPostImageMetadataRepository
     get() = _chanPostImageMetadataRepository.get()
+  private val mediaMetadataExtractor: com.github.k1rakishou.chan.utils.MediaMetadataExtractor
+    get() = _mediaMetadataExtractor.get()
 
   init {
     if (!isInEditMode) {
@@ -473,16 +477,18 @@ class PostImageThumbnailView @JvmOverloads constructor(
       return
     }
 
-    val fileHash = postImage.fileHash
+    // Use URL as fallback hash for imported threads that don't have MD5 hashes
+    val imageUrl = postImage.imageUrl
+    val fileHash = postImage.fileHash ?: imageUrl?.toString()
     if (fileHash == null) {
-      Logger.d(TAG, "loadMediaMetadata() No fileHash for ${postImage.imageUrl}")
+      Logger.d(TAG, "loadMediaMetadata() No fileHash or imageUrl for post")
       return
     }
 
     // Load metadata asynchronously
     scope.launch {
       try {
-        Logger.d(TAG, "loadMediaMetadata() Loading metadata for fileHash: ${fileHash} (${postImage.imageUrl})")
+        Logger.d(TAG, "loadMediaMetadata() Loading metadata for hash: ${fileHash} (${postImage.imageUrl})")
         val result = chanPostImageMetadataRepository.get(fileHash)
         if (result.isValue()) {
           val metadata = result.valueOrNull()
@@ -497,7 +503,9 @@ class PostImageThumbnailView @JvmOverloads constructor(
             Logger.d(TAG, "loadMediaMetadata() Metadata is null for ${fileHash}")
           }
         } else {
-          Logger.d(TAG, "loadMediaMetadata() No metadata found in DB for ${fileHash}: ${result.errorOrNull()}")
+          Logger.d(TAG, "loadMediaMetadata() No metadata found in DB for ${fileHash}, checking for downloaded file...")
+          // Try to extract metadata from existing downloaded file (for old downloads)
+          extractMetadataFromDownloadedFile(postImage, fileHash)
         }
       } catch (error: Throwable) {
         Logger.e(TAG, "loadMediaMetadata() Failed to load metadata for ${fileHash}", error)
@@ -505,8 +513,63 @@ class PostImageThumbnailView @JvmOverloads constructor(
     }
   }
   
+  private suspend fun extractMetadataFromDownloadedFile(postImage: ChanPostImage, fileHash: String) {
+    try {
+      val threadDescriptor = postImage.ownerPostDescriptor?.threadDescriptor()
+      if (threadDescriptor == null) {
+        Logger.d(TAG, "extractMetadataFromDownloadedFile() No thread descriptor for ${postImage.imageUrl}")
+        return
+      }
+      
+      val imageUrl = postImage.imageUrl
+      if (imageUrl == null) {
+        Logger.d(TAG, "extractMetadataFromDownloadedFile() No image URL for ${postImage}")
+        return
+      }
+      
+      // Find the downloaded file using ThreadDownloadManager
+      val downloadedFile = threadDownloadManager.findDownloadedFile(imageUrl, threadDescriptor)
+      if (downloadedFile == null) {
+        Logger.d(TAG, "extractMetadataFromDownloadedFile() No downloaded file found for ${imageUrl}")
+        return
+      }
+      
+      val javaFile = downloadedFile.getFullPath()?.let { java.io.File(it) }
+      if (javaFile == null || !javaFile.exists()) {
+        Logger.d(TAG, "extractMetadataFromDownloadedFile() File doesn't exist: ${downloadedFile.getFullPath()}")
+        return
+      }
+      
+      Logger.d(TAG, "extractMetadataFromDownloadedFile() Extracting metadata from existing file: ${javaFile.path}")
+      val metadata = mediaMetadataExtractor.extract(javaFile)
+      if (metadata != null) {
+        // Store in database for future use
+        chanPostImageMetadataRepository.store(
+          imageHash = fileHash,
+          durationMs = metadata.durationMs,
+          hasAudio = metadata.hasAudio
+        )
+        
+        Logger.d(TAG, "extractMetadataFromDownloadedFile() Extracted and stored metadata: duration=${metadata.durationMs}ms, hasAudio=${metadata.hasAudio}")
+        
+        // Update UI
+        withContext(Dispatchers.Main) {
+          mediaDurationMs = metadata.durationMs
+          mediaHasAudio = metadata.hasAudio
+          invalidate()
+        }
+      } else {
+        Logger.w(TAG, "extractMetadataFromDownloadedFile() Metadata extraction returned null")
+      }
+    } catch (error: Throwable) {
+      Logger.e(TAG, "extractMetadataFromDownloadedFile() Failed to extract metadata from downloaded file", error)
+    }
+  }
+  
   private fun listenForMetadataUpdates(postImage: ChanPostImage) {
-    val fileHash = postImage.fileHash ?: return
+    // Use URL as fallback hash for imported threads that don't have MD5 hashes
+    val imageUrl = postImage.imageUrl
+    val fileHash = postImage.fileHash ?: imageUrl?.toString() ?: return
     
     scope.launch {
       chanPostImageMetadataRepository.metadataUpdates

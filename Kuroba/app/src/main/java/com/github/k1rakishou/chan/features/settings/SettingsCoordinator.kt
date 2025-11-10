@@ -133,6 +133,8 @@ class SettingsCoordinator(
   lateinit var installMpvNativeLibrariesFromLocalDirectoryUseCase: InstallMpvNativeLibrariesFromLocalDirectoryUseCase
   @Inject
   lateinit var appRestarter: AppRestarter
+  @Inject
+  lateinit var extractAllMetadataUseCase: com.github.k1rakishou.chan.core.usecase.ExtractAllMetadataUseCase
 
   private val scope = KurobaCoroutineScope()
   private val settingBuilderExecutor = SerializedCoroutineExecutor(scope)
@@ -155,7 +157,11 @@ class SettingsCoordinator(
       context,
       applicationVisibilityManager,
       themeEngine,
-      dialogFactory
+      dialogFactory,
+      navigationController,
+      scope,
+      appRestarter,
+      extractAllMetadataUseCase
     )
   }
 

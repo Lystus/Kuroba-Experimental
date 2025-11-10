@@ -77,6 +77,7 @@ class ImportThreadsFromDirectoryUseCase @Inject constructor(
                     // Create parameters for single file import
                     val singleImportParams = ImportThreadFromZipUseCase.Params(
                         zipFile = zipFile,
+                        appContext = parameter.appContext,
                         onProgress = { singleProgress ->
                             // Update progress for current file
                             val overallProgress = (index + singleProgress.percentage) / zipFiles.size
@@ -176,6 +177,7 @@ class ImportThreadsFromDirectoryUseCase @Inject constructor(
     
     data class Params(
         val directory: ExternalFile,
+        val appContext: android.content.Context,
         val onProgress: (BatchProgressUpdate) -> Unit
     )
     

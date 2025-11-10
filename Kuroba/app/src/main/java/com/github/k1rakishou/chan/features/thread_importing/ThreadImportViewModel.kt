@@ -63,7 +63,7 @@ class ThreadImportViewModel : BaseViewModel() {
         // Initialize any required state here
     }
     
-    suspend fun importThreadFromFile(uri: Uri): ModularResult<ChanDescriptor.ThreadDescriptor> {
+    suspend fun importThreadFromFile(uri: Uri, context: android.content.Context): ModularResult<ChanDescriptor.ThreadDescriptor> {
         return withContext(Dispatchers.IO) {
             _importState.value = ImportState.Loading
             
@@ -79,6 +79,7 @@ class ThreadImportViewModel : BaseViewModel() {
                 val result = importThreadFromZipUseCase.execute(
                     ImportThreadFromZipUseCase.Params(
                         zipFile = externalFile,
+                        appContext = context,
                         onProgress = { progress -> 
                             _importProgress.value = ImportProgress(progress.message, progress.percentage)
                         }

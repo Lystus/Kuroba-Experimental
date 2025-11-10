@@ -107,6 +107,21 @@ class RateLimitManager @Inject constructor(
   fun setCooldown(siteDescriptor: SiteDescriptor, durationSeconds: Int, retryCount: Int = 0) {
     applicationScope.launch {
       setCooldownMutex.withLock {
+        // If duration is 0 or negative, don't set cooldown - resume immediately
+        if (durationSeconds <= 0) {
+          Logger.d(TAG, "setCooldown() skipping cooldown for site=${siteDescriptor.siteName}, " +
+            "durationSeconds=$durationSeconds (resume immediately)")
+          // Clear any existing cooldown to ensure downloads resume
+          cooldownMap.remove(siteDescriptor)
+          cooldownJobs.remove(siteDescriptor)?.cancel()
+          updateCooldownState()
+          
+          // Emit cooldown expired event to trigger immediate download restart
+          Logger.d(TAG, "Emitting cooldownExpiredFlow for immediate resume")
+          _cooldownExpiredFlow.emit(siteDescriptor)
+          return@withLock
+        }
+        
         // Cap cooldown duration to prevent extreme values from server
         val cappedDuration = durationSeconds.coerceIn(1, MAX_COOLDOWN_SECONDS)
         if (cappedDuration != durationSeconds) {

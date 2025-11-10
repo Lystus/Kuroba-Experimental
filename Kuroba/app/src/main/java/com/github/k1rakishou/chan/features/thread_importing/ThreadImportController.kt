@@ -164,6 +164,7 @@ class ThreadImportController(
                 
                 val params = ImportThreadFromZipUseCase.Params(
                     zipFile = externalFile,
+                    appContext = context,
                     onProgress = { progress ->
                         // Update loading message if possible
                         Logger.d(TAG, "Progress: ${progress.message} (${progress.percentage})")
@@ -231,6 +232,7 @@ class ThreadImportController(
                 
                 val params = ImportThreadsFromDirectoryUseCase.Params(
                     directory = externalFile,
+                    appContext = context,
                     onProgress = { progress ->
                         // Update loading message with detailed progress
                         Logger.d(TAG, "Batch Progress: ${progress.message} (${progress.currentFile}/${progress.totalFiles})")

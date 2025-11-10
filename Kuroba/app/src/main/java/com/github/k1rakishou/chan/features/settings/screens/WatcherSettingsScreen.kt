@@ -12,10 +12,17 @@ import com.github.k1rakishou.chan.core.watcher.BookmarkForegroundWatcher
 import com.github.k1rakishou.chan.features.settings.SettingsGroup
 import com.github.k1rakishou.chan.features.settings.WatcherScreen
 import com.github.k1rakishou.chan.features.settings.setting.BooleanSettingV2
+import com.github.k1rakishou.chan.features.settings.setting.LinkSettingV2
 import com.github.k1rakishou.chan.features.settings.setting.ListSettingV2
 import com.github.k1rakishou.chan.features.settings.setting.RangeSettingV2
+import com.github.k1rakishou.chan.ui.controller.LoadingViewController
 import com.github.k1rakishou.chan.utils.AppModuleAndroidUtils
 import com.github.k1rakishou.chan.utils.AppModuleAndroidUtils.getString
+import com.github.k1rakishou.common.errorMessageOrClassName
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import com.github.k1rakishou.chan.utils.PhoneWithBackgroundLimitationsHelper
 import com.github.k1rakishou.core_themes.ThemeEngine
 import com.github.k1rakishou.persist_state.PersistableChanState
@@ -26,7 +33,11 @@ class WatcherSettingsScreen(
   context: Context,
   private val applicationVisibilityManager: ApplicationVisibilityManager,
   private val themeEngine: ThemeEngine,
-  private val dialogFactory: DialogFactory
+  private val dialogFactory: DialogFactory,
+  private val navigationController: com.github.k1rakishou.chan.ui.controller.navigation.NavigationController,
+  private val mainScope: com.github.k1rakishou.chan.core.base.KurobaCoroutineScope,
+  private val appRestarter: com.github.k1rakishou.chan.core.helper.AppRestarter,
+  private val extractAllMetadataUseCase: com.github.k1rakishou.chan.core.usecase.ExtractAllMetadataUseCase
 ) : BaseSettingsScreen(
   context,
   WatcherScreen,
@@ -101,6 +112,16 @@ class WatcherSettingsScreen(
           topDescriptionIdFunc = { R.string.setting_thread_downloader_media_delay },
           bottomDescriptionIdFunc = { R.string.setting_thread_downloader_media_delay_description },
           currentValueStringFunc = { "${ChanSettings.threadDownloaderMediaDownloadDelayMs.get()}ms" }
+        )
+
+        group += LinkSettingV2.createBuilder(
+          context = context,
+          identifier = WatcherScreen.ThreadDownloaderGroup.ExtractAllMetadata,
+          topDescriptionIdFunc = { R.string.setting_extract_all_metadata },
+          bottomDescriptionIdFunc = { R.string.setting_extract_all_metadata_description },
+          callback = {
+            showExtractMetadataConfirmationDialog()
+          }
         )
 
         group
@@ -414,5 +435,75 @@ class WatcherSettingsScreen(
       TimeUnit.HOURS.toMillis(3).toInt(),
       TimeUnit.HOURS.toMillis(4).toInt(),
     )
+  }
+
+  private fun showExtractMetadataConfirmationDialog() {
+    dialogFactory.createSimpleConfirmationDialog(
+      context = context,
+      titleText = getString(R.string.extract_metadata_confirm_title),
+      descriptionText = getString(R.string.extract_metadata_confirm_description),
+      onPositiveButtonClickListener = {
+        startMetadataExtraction()
+      }
+    )
+  }
+
+  private fun startMetadataExtraction() {
+    // Create NON-CANCELLABLE loading controller
+    val loadingViewController = LoadingViewController(
+      context,
+      false, // false = show progress text
+      getString(R.string.extracting_metadata_title)
+    )
+    // NOTE: NO enableCancellation() call - user CANNOT cancel
+
+    val job = mainScope.launch(start = CoroutineStart.LAZY) {
+      try {
+        val result = extractAllMetadataUseCase.execute { current, total ->
+          val text = getString(R.string.extracting_metadata_progress, current, total)
+          loadingViewController.updateWithText(text)
+        }
+
+        // Success - show results and restart
+        withContext(Dispatchers.Main) {
+          loadingViewController.stopPresenting()
+
+          val description = getString(
+            R.string.extraction_complete_description,
+            result.successCount,
+            result.skippedCount,
+            result.errorCount
+          )
+
+          dialogFactory.createSimpleInformationDialog(
+            context = context,
+            titleText = getString(R.string.extraction_complete_title),
+            descriptionText = description,
+            onDismissListener = {
+              appRestarter.restart()
+            }
+          )
+        }
+
+      } catch (e: Exception) {
+        // Error - show error dialog
+        withContext(Dispatchers.Main) {
+          loadingViewController.stopPresenting()
+
+          dialogFactory.createSimpleInformationDialog(
+            context = context,
+            titleText = getString(R.string.extraction_error_title),
+            descriptionText = getString(
+              R.string.extraction_error_description,
+              e.errorMessageOrClassName()
+            )
+          )
+        }
+      }
+    }
+
+    // Present controller BEFORE starting
+    navigationController.presentController(loadingViewController)
+    job.start()
   }
 }
