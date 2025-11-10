@@ -11,6 +11,7 @@ import com.github.k1rakishou.chan.core.loader.PostLoaderData
 import com.github.k1rakishou.chan.core.manager.ArchivesManager
 import com.github.k1rakishou.chan.core.manager.ChanThreadManager
 import com.github.k1rakishou.chan.core.manager.PrefetchStateManager
+import com.github.k1rakishou.chan.core.manager.RateLimitManager
 import com.github.k1rakishou.chan.core.manager.ThreadDownloadManager
 import com.github.k1rakishou.chan.utils.AppModuleAndroidUtils.shouldLoadForNetworkType
 import com.github.k1rakishou.chan.utils.BackgroundUtils
@@ -30,7 +31,8 @@ class PrefetchLoader(
   private val chanThreadManager: Lazy<ChanThreadManager>,
   private val archivesManager: Lazy<ArchivesManager>,
   private val prefetchStateManager: PrefetchStateManager,
-  private val threadDownloadManager: Lazy<ThreadDownloadManager>
+  private val threadDownloadManager: Lazy<ThreadDownloadManager>,
+  private val rateLimitManager: Lazy<RateLimitManager>
 ) : OnDemandContentLoader(LoaderType.PrefetchLoader) {
   private val cacheFileType = CacheFileType.PostMediaFull
 
@@ -61,6 +63,13 @@ class PrefetchLoader(
     val threadDescriptor = postLoaderData.postDescriptor.threadDescriptor()
     if (archivesManager.get().isSiteArchive(threadDescriptor.siteDescriptor())) {
       // Disable prefetching for archives because they can ban you for this
+      return rejected()
+    }
+
+    // Check if we're in a rate limit cooldown period for this site
+    val siteDescriptor = threadDescriptor.siteDescriptor()
+    if (rateLimitManager.get().isInCooldown(siteDescriptor)) {
+      // Skip prefetching while in cooldown to avoid triggering more rate limits
       return rejected()
     }
 

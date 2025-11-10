@@ -315,13 +315,6 @@ class ThreadDownloadingDelegate(
       return
     }
 
-    // Apply user-configured delay before starting media downloads
-    val delayMs = ChanSettings.threadDownloaderMediaDownloadDelayMs.get()
-    if (delayMs > 0) {
-      Logger.d(TAG, "processThreadMedia($index/$total) delaying ${delayMs}ms before media downloads")
-      kotlinx.coroutines.delay(delayMs.toLong())
-    }
-
     val rootDir = fileManager.fromRawFile(appConstants.threadDownloaderCacheDir)
     Logger.d(TAG, "processThreadMedia($index/$total) threadDescriptor=${threadDescriptor}, " +
       "chanPostImages=${chanPostImages.size}")
@@ -438,6 +431,12 @@ class ThreadDownloadingDelegate(
     outOfDiskSpaceError: AtomicBoolean,
     outputDirError: AtomicBoolean,
   ) {
+    // Apply per-file delay to avoid rate limits
+    val delayMs = ChanSettings.threadDownloaderMediaDownloadDelayMs.get()
+    if (delayMs > 0) {
+      kotlinx.coroutines.delay(delayMs.toLong())
+    }
+
     var outputFile = fileManager.findFile(outputDirectory, name)
     if (outputFile == null) {
       outputFile = fileManager.create(outputDirectory, listOf(FileSegment(name)))

@@ -20,6 +20,7 @@ import com.github.k1rakishou.chan.core.manager.ChanThreadManager;
 import com.github.k1rakishou.chan.core.manager.PostFilterHighlightManager;
 import com.github.k1rakishou.chan.core.manager.PostFilterManager;
 import com.github.k1rakishou.chan.core.manager.PrefetchStateManager;
+import com.github.k1rakishou.chan.core.manager.RateLimitManager;
 import com.github.k1rakishou.chan.core.manager.ThirdEyeManager;
 import com.github.k1rakishou.chan.core.manager.ThreadDownloadManager;
 import com.github.k1rakishou.common.AppConstants;
@@ -46,7 +47,8 @@ public class LoaderModule {
             PrefetchStateManager prefetchStateManager,
             Lazy<ChanThreadManager> chanThreadManager,
             Lazy<ArchivesManager> archivesManager,
-            Lazy<ThreadDownloadManager> threadDownloadManager
+            Lazy<ThreadDownloadManager> threadDownloadManager,
+            Lazy<RateLimitManager> rateLimitManager
     ) {
         Logger.deps("PrefetchLoader");
 
@@ -56,7 +58,8 @@ public class LoaderModule {
                 chanThreadManager,
                 archivesManager,
                 prefetchStateManager,
-                threadDownloadManager
+                threadDownloadManager,
+                rateLimitManager
         );
     }
 
