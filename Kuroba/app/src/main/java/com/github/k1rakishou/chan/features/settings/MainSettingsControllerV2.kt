@@ -430,7 +430,14 @@ class MainSettingsControllerV2(
             clickListener {
               val prev = settingV2.current
 
-              showUpdateRangeSettingDialog(settingV2) { curr ->
+              // Use 100ms step size for media delay setting
+              val stepSize = if (settingV2.settingsIdentifier == WatcherScreen.ThreadDownloaderGroup.ThreadDownloaderMediaDownloadDelay) {
+                100
+              } else {
+                null
+              }
+
+              showUpdateRangeSettingDialog(settingV2, stepSize) { curr ->
                 if (prev != curr) {
                   updateRestartRefreshButton(settingV2)
                 }

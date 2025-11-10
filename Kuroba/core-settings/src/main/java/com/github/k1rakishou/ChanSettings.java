@@ -280,7 +280,7 @@ public class ChanSettings {
     //region THREAD DOWNLOADER
     public static IntegerSetting threadDownloaderUpdateInterval;
     public static BooleanSetting threadDownloaderDownloadMediaOnMeteredNetwork;
-    public static IntegerSetting threadDownloaderMediaDownloadDelayMs;
+    public static RangeSetting threadDownloaderMediaDownloadDelayMs;
     //endregion
 
     //region APPEARANCE
@@ -497,7 +497,7 @@ public class ChanSettings {
             // region THREAD DOWNLOADER
             threadDownloaderUpdateInterval = new IntegerSetting(provider, "preference_thread_downloader_update_interval", (int) HOURS.toMillis(1));
             threadDownloaderDownloadMediaOnMeteredNetwork = new BooleanSetting(provider, "preference_thread_downloader_download_media_on_metered_network", false);
-            threadDownloaderMediaDownloadDelayMs = new IntegerSetting(provider, "preference_thread_downloader_media_download_delay_ms", 1000);
+            threadDownloaderMediaDownloadDelayMs = new RangeSetting(provider, "preference_thread_downloader_media_download_delay_ms", 1000, 0, 5000);
             //endregion
 
             //region APPEARANCE

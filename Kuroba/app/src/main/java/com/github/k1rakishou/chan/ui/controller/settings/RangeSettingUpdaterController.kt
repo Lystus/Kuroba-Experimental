@@ -23,6 +23,7 @@ class RangeSettingUpdaterController(
   private val minValue: Int,
   private val maxValue: Int,
   private val currentValue: Int,
+  private val stepSize: Int? = null,
   private var resetClickedFunc: (() -> Unit)? = null,
   private var applyClickedFunc: ((Int) -> Unit)? = null
 ) : BaseFloatingController(context) {
@@ -68,6 +69,12 @@ class RangeSettingUpdaterController(
     slider.valueTo = maxValue.toFloat()
     slider.value = currentValue.toFloat()
     slider.setLabelFormatter { value -> value.toInt().toString() }
+    
+    // Configure step size if provided
+    if (stepSize != null && stepSize > 0) {
+      val steps = ((maxValue - minValue) / stepSize) - 1
+      slider.stepSize = stepSize.toFloat()
+    }
 
     slider.addOnChangeListener { _, value, _ ->
       currentValueInput.mySetText(value.toInt().toString())
@@ -105,7 +112,13 @@ class RangeSettingUpdaterController(
     }
 
     apply.setOnClickListener {
-      applyClickedFunc?.invoke(slider.value.toInt())
+      val value = if (stepSize != null && stepSize > 0) {
+        // Round to nearest step increment
+        ((slider.value.toInt() + stepSize / 2) / stepSize) * stepSize
+      } else {
+        slider.value.toInt()
+      }
+      applyClickedFunc?.invoke(value)
       pop()
     }
   }

@@ -13,6 +13,7 @@ import com.github.k1rakishou.chan.features.settings.SettingsGroup
 import com.github.k1rakishou.chan.features.settings.WatcherScreen
 import com.github.k1rakishou.chan.features.settings.setting.BooleanSettingV2
 import com.github.k1rakishou.chan.features.settings.setting.ListSettingV2
+import com.github.k1rakishou.chan.features.settings.setting.RangeSettingV2
 import com.github.k1rakishou.chan.utils.AppModuleAndroidUtils
 import com.github.k1rakishou.chan.utils.AppModuleAndroidUtils.getString
 import com.github.k1rakishou.chan.utils.PhoneWithBackgroundLimitationsHelper
@@ -91,6 +92,15 @@ class WatcherSettingsScreen(
           topDescriptionIdFunc = { R.string.setting_thread_downloader_media_metered_network },
           bottomDescriptionIdFunc = { R.string.setting_thread_downloader_media_metered_network_description },
           setting = ChanSettings.threadDownloaderDownloadMediaOnMeteredNetwork
+        )
+
+        group += RangeSettingV2.createBuilder(
+          context = context,
+          identifier = WatcherScreen.ThreadDownloaderGroup.ThreadDownloaderMediaDownloadDelay,
+          setting = ChanSettings.threadDownloaderMediaDownloadDelayMs,
+          topDescriptionIdFunc = { R.string.setting_thread_downloader_media_delay },
+          bottomDescriptionIdFunc = { R.string.setting_thread_downloader_media_delay_description },
+          currentValueStringFunc = { "${ChanSettings.threadDownloaderMediaDownloadDelayMs.get()}ms" }
         )
 
         group

@@ -52,6 +52,7 @@ abstract class BaseSettingsController(
 
   protected fun showUpdateRangeSettingDialog(
     rangeSettingV2: RangeSettingV2,
+    stepSize: Int? = null,
     rebuildScreenFunc: (Any?) -> Unit
   ) {
     val rangeSettingUpdaterController = RangeSettingUpdaterController(
@@ -61,6 +62,7 @@ abstract class BaseSettingsController(
       minValue = rangeSettingV2.min,
       maxValue = rangeSettingV2.max,
       currentValue = rangeSettingV2.current,
+      stepSize = stepSize,
       resetClickedFunc = {
         rangeSettingV2.updateSetting(rangeSettingV2.default)
         rebuildScreenFunc(rangeSettingV2.default)

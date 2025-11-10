@@ -66,10 +66,15 @@ class ColorizableSlider @JvmOverloads constructor(
       ),
       intArrayOf(
         themeEngine.chanTheme.accentColor,
-        manipulateColor(themeEngine.chanTheme.defaultColors.controlNormalColor, .6f),
+        themeEngine.chanTheme.accentColor,
         themeEngine.chanTheme.getControlDisabledColor(themeEngine.chanTheme.defaultColors.controlNormalColor),
-        manipulateColor(themeEngine.chanTheme.defaultColors.controlNormalColor, .6f)
+        themeEngine.chanTheme.accentColor
       )
+    )
+    
+    // Inactive track color (matches Compose slider with 30% alpha)
+    trackInactiveTintList = ColorStateList.valueOf(
+      manipulateColor(themeEngine.chanTheme.accentColor, 0.3f)
     )
   }
 

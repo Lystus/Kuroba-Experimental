@@ -173,7 +173,8 @@ class ThreadDownloaderSettingsController(
         Slider(
           value = mediaDownloadDelayMs.toFloat(),
           onValueChange = { newValue ->
-            mediaDownloadDelayMs = newValue.toInt()
+            // Round to nearest 100ms increment
+            mediaDownloadDelayMs = ((newValue.toInt() + 50) / 100) * 100
             ChanSettings.threadDownloaderMediaDownloadDelayMs.set(mediaDownloadDelayMs)
           },
           valueRange = 0f..5000f,
