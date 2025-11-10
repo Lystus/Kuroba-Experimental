@@ -13,6 +13,7 @@ import com.github.k1rakishou.model.repository.ChanCatalogSnapshotRepository
 import com.github.k1rakishou.model.repository.ChanFilterRepository
 import com.github.k1rakishou.model.repository.ChanFilterWatchRepository
 import com.github.k1rakishou.model.repository.ChanPostHideRepository
+import com.github.k1rakishou.model.repository.ChanPostImageMetadataRepository
 import com.github.k1rakishou.model.repository.ChanPostImageRepository
 import com.github.k1rakishou.model.repository.ChanPostRepository
 import com.github.k1rakishou.model.repository.ChanSavedReplyRepository
@@ -598,6 +599,18 @@ class ModelModule {
       dependencies.isDevFlavor,
       dependencies.coroutineScope,
       localSource
+    )
+  }
+
+  @Singleton
+  @Provides
+  fun provideChanPostImageMetadataRepository(
+    database: KurobaDatabase,
+    dependencies: ModelComponent.Dependencies
+  ): ChanPostImageMetadataRepository {
+    return ChanPostImageMetadataRepository(
+      database,
+      dependencies.coroutineScope
     )
   }
 

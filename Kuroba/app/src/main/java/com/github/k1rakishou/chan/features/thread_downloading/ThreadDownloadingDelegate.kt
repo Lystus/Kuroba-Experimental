@@ -12,6 +12,7 @@ import com.github.k1rakishou.chan.core.site.SiteResolver
 import com.github.k1rakishou.chan.core.usecase.DownloadParams
 import com.github.k1rakishou.chan.core.usecase.ThreadDownloaderPersistPostsInDatabaseUseCase
 import com.github.k1rakishou.chan.utils.AppModuleAndroidUtils
+import com.github.k1rakishou.chan.utils.MediaMetadataExtractor
 import com.github.k1rakishou.common.AndroidUtils
 import com.github.k1rakishou.common.AppConstants
 import com.github.k1rakishou.common.ModularResult
@@ -28,7 +29,9 @@ import com.github.k1rakishou.fsaf.file.DirectorySegment
 import com.github.k1rakishou.fsaf.file.FileSegment
 import com.github.k1rakishou.model.data.descriptor.ChanDescriptor
 import com.github.k1rakishou.model.data.post.ChanPostImage
+import com.github.k1rakishou.model.data.post.ChanPostImageType
 import com.github.k1rakishou.model.data.thread.ThreadDownload
+import com.github.k1rakishou.model.repository.ChanPostImageMetadataRepository
 import com.github.k1rakishou.model.repository.ChanPostImageRepository
 import com.github.k1rakishou.model.repository.ChanPostRepository
 import dagger.Lazy
@@ -56,10 +59,12 @@ class ThreadDownloadingDelegate(
   private val threadDownloadManager: ThreadDownloadManager,
   private val chanPostRepository: ChanPostRepository,
   private val chanPostImageRepository: ChanPostImageRepository,
+  private val chanPostImageMetadataRepository: ChanPostImageMetadataRepository,
   private val threadDownloaderFileManagerWrapper: ThreadDownloaderFileManagerWrapper,
   private val threadDownloadProgressNotifier: ThreadDownloadProgressNotifier,
   private val threadDownloaderPersistPostsInDatabaseUseCase: ThreadDownloaderPersistPostsInDatabaseUseCase,
-  private val rateLimitManager: RateLimitManager
+  private val rateLimitManager: RateLimitManager,
+  private val mediaMetadataExtractor: MediaMetadataExtractor
 ) {
   private val fileManager: FileManager
     get() = threadDownloaderFileManagerWrapper.fileManager
@@ -376,6 +381,7 @@ class ThreadDownloadingDelegate(
         downloadImage(
           threadDescriptor = threadDescriptor,
           outputDirectory = outputDirectory,
+          postImage = postImage,
           isThumbnail = true,
           name = thumbnailName,
           imageUrl = thumbnailUrl,
@@ -400,6 +406,7 @@ class ThreadDownloadingDelegate(
         downloadImage(
           threadDescriptor = threadDescriptor,
           outputDirectory = outputDirectory,
+          postImage = postImage,
           isThumbnail = false,
           name = fullImageName,
           imageUrl = fullImageUrl,
@@ -424,6 +431,7 @@ class ThreadDownloadingDelegate(
   private suspend fun downloadImage(
     threadDescriptor: ChanDescriptor.ThreadDescriptor,
     outputDirectory: AbstractFile,
+    postImage: ChanPostImage,
     isThumbnail: Boolean,
     name: String,
     imageUrl: HttpUrl,
@@ -574,6 +582,35 @@ class ThreadDownloadingDelegate(
           if (finalFile != null && fileManager.copyFileContents(tempFile, finalFile)) {
             downloadSuccess = true
             Logger.d(TAG, "downloadImage() successfully downloaded $name (${finalFileSize} bytes, expected: ${expectedContentLength})")
+            
+            // Extract metadata for full media files (not thumbnails, only for MOVIE and GIF types)
+            if (!isThumbnail && (postImage.type == ChanPostImageType.MOVIE || postImage.type == ChanPostImageType.GIF)) {
+              val fileHash = postImage.fileHash
+              if (fileHash != null) {
+                try {
+                  val javaFile = finalFile.getFullPath()?.let { java.io.File(it) }
+                  if (javaFile != null && javaFile.exists()) {
+                    val metadata = mediaMetadataExtractor.extract(javaFile)
+                    if (metadata != null) {
+                      chanPostImageMetadataRepository.store(
+                        imageHash = fileHash,
+                        durationMs = metadata.durationMs,
+                        hasAudio = metadata.hasAudio
+                      )
+                      Logger.d(TAG, "downloadImage() extracted metadata for $name: duration=${metadata.durationMs}ms, hasAudio=${metadata.hasAudio}")
+                    } else {
+                      Logger.w(TAG, "downloadImage() metadata extraction returned null for $name")
+                    }
+                  } else {
+                    Logger.w(TAG, "downloadImage() could not get file path for metadata extraction: $name")
+                  }
+                } catch (error: Throwable) {
+                  Logger.e(TAG, "downloadImage() failed to extract metadata for $name: ${error.errorMessageOrClassName()}")
+                }
+              } else {
+                Logger.d(TAG, "downloadImage() skipping metadata extraction for $name (fileHash is null)")
+              }
+            }
           } else {
             Logger.e(TAG, "downloadImage() failed to create final file or copy contents for $name")
           }

@@ -79,6 +79,10 @@ class PostImageThumbnailView @JvmOverloads constructor(
   @Inject
   lateinit var _thirdEyeManager: Lazy<ThirdEyeManager>
   @Inject
+  lateinit var _threadDownloadManager: Lazy<com.github.k1rakishou.chan.core.manager.ThreadDownloadManager>
+  @Inject
+  lateinit var _chanPostImageMetadataRepository: Lazy<com.github.k1rakishou.model.repository.ChanPostImageMetadataRepository>
+  @Inject
   lateinit var themeEngine: ThemeEngine
   @Inject
   lateinit var cacheHandler: CacheHandler
@@ -103,11 +107,19 @@ class PostImageThumbnailView @JvmOverloads constructor(
   private var hasThirdEyeImageMaybe: Boolean = false
   private var nsfwMode: Boolean = false
   private var alphaAnimator: ValueAnimator? = null
+  private var mediaDurationMs: Int? = null
+  private var mediaHasAudio: Boolean? = null
+  private val durationTextBounds = Rect()
+  private val audioIconBounds = Rect()
 
   private val prefetchStateManager: PrefetchStateManager
     get() = _prefetchStateManager.get()
   private val thirdEyeManager: ThirdEyeManager
     get() = _thirdEyeManager.get()
+  private val threadDownloadManager: com.github.k1rakishou.chan.core.manager.ThreadDownloadManager
+    get() = _threadDownloadManager.get()
+  private val chanPostImageMetadataRepository: com.github.k1rakishou.model.repository.ChanPostImageMetadataRepository
+    get() = _chanPostImageMetadataRepository.get()
 
   init {
     if (!isInEditMode) {
@@ -321,6 +333,9 @@ class PostImageThumbnailView @JvmOverloads constructor(
     this.postImage = postImage
     this.canUseHighResCells = canUseHighResCells
 
+    // Load metadata for downloaded threads
+    loadMediaMetadata(postImage)
+
     val (url, cacheFileType) = getUrl(postImage, canUseHighResCells)
     if (url == null || cacheFileType == null || TextUtils.isEmpty(url)) {
       unbindPostImage()
@@ -444,6 +459,41 @@ class PostImageThumbnailView @JvmOverloads constructor(
     this.ratio = ratio
   }
 
+  private fun loadMediaMetadata(postImage: ChanPostImage) {
+    // Reset metadata
+    mediaDurationMs = null
+    mediaHasAudio = null
+
+    // Only load metadata for MOVIE and GIF types
+    if (postImage.type != ChanPostImageType.MOVIE && postImage.type != ChanPostImageType.GIF) {
+      return
+    }
+
+    val fileHash = postImage.fileHash
+    if (fileHash == null) {
+      return
+    }
+
+    // Load metadata asynchronously
+    scope.launch {
+      try {
+        val result = chanPostImageMetadataRepository.get(fileHash)
+        if (result.isValue()) {
+          val metadata = result.valueOrNull()
+          if (metadata != null) {
+            withContext(Dispatchers.Main) {
+              mediaDurationMs = metadata.durationMs
+              mediaHasAudio = metadata.hasAudio
+              invalidate()
+            }
+          }
+        }
+      } catch (error: Throwable) {
+        Logger.e(TAG, "loadMediaMetadata() Failed to load metadata for ${fileHash}", error)
+      }
+    }
+  }
+
   override fun draw(canvas: Canvas) {
     super.draw(canvas)
 
@@ -488,6 +538,55 @@ class PostImageThumbnailView @JvmOverloads constructor(
         segmentedCircleDrawable!!.draw(canvas)
       }
     }
+
+    // Draw duration and audio indicator for downloaded media
+    val durationMs = mediaDurationMs
+    if (durationMs != null && durationMs > 0) {
+      val durationText = formatDuration(durationMs)
+      val hasAudio = mediaHasAudio ?: false
+      
+      // Measure text
+      durationTextPaint.getTextBounds(durationText, 0, durationText.length, durationTextBounds)
+      
+      val textWidth = durationTextBounds.width()
+      val textHeight = durationTextBounds.height()
+      val padding = dp(4f).toFloat()
+      
+      // Calculate background size
+      val audioIconSpace = if (hasAudio && chanPostImage?.type == ChanPostImageType.MOVIE) audioIconSize + padding else 0f
+      val bgWidth = textWidth + padding * 2 + audioIconSpace
+      val bgHeight = textHeight + padding * 2
+      
+      // Position at top-right to avoid collision with "Show image details" overlay
+      val bgLeft = width - bgWidth - cornerIndicatorMargin
+      val bgTop = cornerIndicatorMargin
+      
+      // Draw semi-transparent background
+      canvas.drawRoundRect(
+        bgLeft,
+        bgTop,
+        bgLeft + bgWidth,
+        bgTop + bgHeight,
+        dp(2f).toFloat(),
+        dp(2f).toFloat(),
+        durationBackgroundPaint
+      )
+      
+      // Draw duration text
+      val textX = bgLeft + padding
+      val textY = bgTop + bgHeight - padding - durationTextBounds.bottom
+      canvas.drawText(durationText, textX, textY, durationTextPaint)
+      
+      // Draw audio icon for videos (not for pure audio files like mp3)
+      if (hasAudio && chanPostImage?.type == ChanPostImageType.MOVIE) {
+        val iconX = (textX + textWidth + padding).toInt()
+        val iconY = (bgTop + (bgHeight - audioIconSize) / 2).toInt()
+        
+        audioIconBounds.set(iconX, iconY, iconX + audioIconSize, iconY + audioIconSize)
+        audioIcon.bounds = audioIconBounds
+        audioIcon.draw(canvas)
+      }
+    }
   }
 
   override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
@@ -515,8 +614,10 @@ class PostImageThumbnailView @JvmOverloads constructor(
     private val cornerIndicatorMargin = dp(4f).toFloat()
     private val prefetchIndicatorSize = dp(16f)
     private val thirdEyeIconSize = dp(16f)
+    private val audioIconSize = dp(14f)
     private val OMITTED_FILES_INDICATOR_PADDING = dp(4f)
     private val playIcon = getDrawable(R.drawable.ic_play_circle_outline_white_24dp)
+    private val audioIcon = getDrawable(R.drawable.ic_volume_up_white_24dp)
     private val glowInterpolator = AccelerateDecelerateInterpolator()
 
     private val nsfwModePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -527,6 +628,30 @@ class PostImageThumbnailView @JvmOverloads constructor(
     private val thirdEyeIconBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
       color = ColorUtils.setAlphaComponent(Color.BLACK, 128)
       style = Paint.Style.FILL
+    }
+
+    private val durationBackgroundPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+      color = ColorUtils.setAlphaComponent(Color.BLACK, 180)
+      style = Paint.Style.FILL
+    }
+
+    private val durationTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+      color = Color.WHITE
+      textSize = dp(12f).toFloat()
+      style = Paint.Style.FILL
+    }
+
+    private fun formatDuration(durationMs: Int): String {
+      val totalSeconds = durationMs / 1000
+      val hours = totalSeconds / 3600
+      val minutes = (totalSeconds % 3600) / 60
+      val seconds = totalSeconds % 60
+
+      return if (hours > 0) {
+        String.format("%d:%02d:%02d", hours, minutes, seconds)
+      } else {
+        String.format("%d:%02d", minutes, seconds)
+      }
     }
   }
 

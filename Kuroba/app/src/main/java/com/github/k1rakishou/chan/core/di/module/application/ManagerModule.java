@@ -101,6 +101,7 @@ import com.github.k1rakishou.chan.features.thread_downloading.ThreadDownloadingC
 import com.github.k1rakishou.chan.features.thread_downloading.ThreadDownloadingDelegate;
 import com.github.k1rakishou.chan.ui.captcha.CaptchaHolder;
 import com.github.k1rakishou.chan.utils.AppModuleAndroidUtils;
+import com.github.k1rakishou.chan.utils.MediaMetadataExtractor;
 import com.github.k1rakishou.common.AppConstants;
 import com.github.k1rakishou.core_logger.Logger;
 import com.github.k1rakishou.core_themes.ThemeEngine;
@@ -110,6 +111,7 @@ import com.github.k1rakishou.model.repository.BookmarksRepository;
 import com.github.k1rakishou.model.repository.ChanFilterRepository;
 import com.github.k1rakishou.model.repository.ChanFilterWatchRepository;
 import com.github.k1rakishou.model.repository.ChanPostHideRepository;
+import com.github.k1rakishou.model.repository.ChanPostImageMetadataRepository;
 import com.github.k1rakishou.model.repository.ChanPostImageRepository;
 import com.github.k1rakishou.model.repository.ChanPostRepository;
 import com.github.k1rakishou.model.repository.ChanSavedReplyRepository;
@@ -868,6 +870,13 @@ public class ManagerModule {
 
     @Singleton
     @Provides
+    public MediaMetadataExtractor provideMediaMetadataExtractor() {
+        Logger.deps("MediaMetadataExtractor");
+        return new MediaMetadataExtractor();
+    }
+
+    @Singleton
+    @Provides
     public ThreadDownloadingDelegate provideThreadDownloadingDelegate(
             AppConstants appConstants,
             Lazy<RealDownloaderOkHttpClient> realDownloaderOkHttpClient,
@@ -876,10 +885,12 @@ public class ManagerModule {
             ThreadDownloadManager threadDownloadManager,
             ChanPostRepository chanPostRepository,
             ChanPostImageRepository chanPostImageRepository,
+            ChanPostImageMetadataRepository chanPostImageMetadataRepository,
             ThreadDownloaderFileManagerWrapper threadDownloaderFileManagerWrapper,
             ThreadDownloadProgressNotifier threadDownloadProgressNotifier,
             ThreadDownloaderPersistPostsInDatabaseUseCase threadDownloaderPersistPostsInDatabaseUseCase,
-            RateLimitManager rateLimitManager
+            RateLimitManager rateLimitManager,
+            MediaMetadataExtractor mediaMetadataExtractor
     ) {
         Logger.deps("ThreadDownloadingDelegate");
         return new ThreadDownloadingDelegate(
@@ -890,10 +901,12 @@ public class ManagerModule {
                 threadDownloadManager,
                 chanPostRepository,
                 chanPostImageRepository,
+                chanPostImageMetadataRepository,
                 threadDownloaderFileManagerWrapper,
                 threadDownloadProgressNotifier,
                 threadDownloaderPersistPostsInDatabaseUseCase,
-                rateLimitManager
+                rateLimitManager,
+                mediaMetadataExtractor
         );
     }
 
