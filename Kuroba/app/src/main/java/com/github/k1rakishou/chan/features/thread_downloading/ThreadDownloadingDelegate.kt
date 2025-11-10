@@ -431,12 +431,6 @@ class ThreadDownloadingDelegate(
     outOfDiskSpaceError: AtomicBoolean,
     outputDirError: AtomicBoolean,
   ) {
-    // Apply per-file delay to avoid rate limits
-    val delayMs = ChanSettings.threadDownloaderMediaDownloadDelayMs.get()
-    if (delayMs > 0) {
-      kotlinx.coroutines.delay(delayMs.toLong())
-    }
-
     var outputFile = fileManager.findFile(outputDirectory, name)
     if (outputFile == null) {
       outputFile = fileManager.create(outputDirectory, listOf(FileSegment(name)))
@@ -468,6 +462,12 @@ class ThreadDownloadingDelegate(
           fileManager.delete(outputFile)
         }
       }
+    }
+
+    // Apply per-file delay ONLY when we're about to download (not when file already exists)
+    val delayMs = ChanSettings.threadDownloaderMediaDownloadDelayMs.get()
+    if (delayMs > 0) {
+      kotlinx.coroutines.delay(delayMs.toLong())
     }
 
     // Use temporary file for atomic writes

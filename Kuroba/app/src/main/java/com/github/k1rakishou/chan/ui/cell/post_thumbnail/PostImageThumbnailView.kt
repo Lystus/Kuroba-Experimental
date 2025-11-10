@@ -335,6 +335,9 @@ class PostImageThumbnailView @JvmOverloads constructor(
 
     // Load metadata for downloaded threads
     loadMediaMetadata(postImage)
+    
+    // Listen for metadata updates
+    listenForMetadataUpdates(postImage)
 
     val (url, cacheFileType) = getUrl(postImage, canUseHighResCells)
     if (url == null || cacheFileType == null || TextUtils.isEmpty(url)) {
@@ -466,31 +469,53 @@ class PostImageThumbnailView @JvmOverloads constructor(
 
     // Only load metadata for MOVIE and GIF types
     if (postImage.type != ChanPostImageType.MOVIE && postImage.type != ChanPostImageType.GIF) {
+      Logger.d(TAG, "loadMediaMetadata() Skipping non-playable type: ${postImage.type} for ${postImage.imageUrl}")
       return
     }
 
     val fileHash = postImage.fileHash
     if (fileHash == null) {
+      Logger.d(TAG, "loadMediaMetadata() No fileHash for ${postImage.imageUrl}")
       return
     }
 
     // Load metadata asynchronously
     scope.launch {
       try {
+        Logger.d(TAG, "loadMediaMetadata() Loading metadata for fileHash: ${fileHash} (${postImage.imageUrl})")
         val result = chanPostImageMetadataRepository.get(fileHash)
         if (result.isValue()) {
           val metadata = result.valueOrNull()
           if (metadata != null) {
+            Logger.d(TAG, "loadMediaMetadata() Found metadata for ${fileHash}: duration=${metadata.durationMs}ms, hasAudio=${metadata.hasAudio}")
             withContext(Dispatchers.Main) {
               mediaDurationMs = metadata.durationMs
               mediaHasAudio = metadata.hasAudio
               invalidate()
             }
+          } else {
+            Logger.d(TAG, "loadMediaMetadata() Metadata is null for ${fileHash}")
           }
+        } else {
+          Logger.d(TAG, "loadMediaMetadata() No metadata found in DB for ${fileHash}: ${result.errorOrNull()}")
         }
       } catch (error: Throwable) {
         Logger.e(TAG, "loadMediaMetadata() Failed to load metadata for ${fileHash}", error)
       }
+    }
+  }
+  
+  private fun listenForMetadataUpdates(postImage: ChanPostImage) {
+    val fileHash = postImage.fileHash ?: return
+    
+    scope.launch {
+      chanPostImageMetadataRepository.metadataUpdates
+        .collect { updatedImageHash ->
+          if (updatedImageHash == fileHash) {
+            Logger.d(TAG, "listenForMetadataUpdates() Received metadata update for ${fileHash}, reloading...")
+            loadMediaMetadata(postImage)
+          }
+        }
     }
   }
 
