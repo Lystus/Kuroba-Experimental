@@ -96,6 +96,8 @@ import com.github.k1rakishou.chan.features.posting.CaptchaDonation;
 import com.github.k1rakishou.chan.features.posting.LastReplyRepository;
 import com.github.k1rakishou.chan.features.posting.PostingServiceDelegate;
 import com.github.k1rakishou.chan.features.posting.solvers.two_captcha.TwoCaptchaSolver;
+import com.github.k1rakishou.chan.features.thread_downloading.MediaDownloadRetryHelper;
+import com.github.k1rakishou.chan.features.thread_downloading.ThreadDownloadCompletionHelper;
 import com.github.k1rakishou.chan.features.thread_downloading.ThreadDownloadProgressNotifier;
 import com.github.k1rakishou.chan.features.thread_downloading.ThreadDownloadingCoordinator;
 import com.github.k1rakishou.chan.features.thread_downloading.ThreadDownloadingDelegate;
@@ -877,8 +879,41 @@ public class ManagerModule {
 
     @Singleton
     @Provides
+    public MediaDownloadRetryHelper provideMediaDownloadRetryHelper(
+            com.github.k1rakishou.model.di.ModelComponent modelComponent,
+            Lazy<RealProxiedOkHttpClient> realProxiedOkHttpClient,
+            RateLimitManager rateLimitManager
+    ) {
+        Logger.deps("MediaDownloadRetryHelper");
+        return new MediaDownloadRetryHelper(
+                modelComponent.getKurobaDatabase(),
+                realProxiedOkHttpClient.get(),
+                rateLimitManager
+        );
+    }
+
+    @Singleton
+    @Provides
+    public ThreadDownloadCompletionHelper provideThreadDownloadCompletionHelper(
+            com.github.k1rakishou.model.di.ModelComponent modelComponent,
+            ChanPostImageRepository chanPostImageRepository,
+            ThreadDownloaderFileManagerWrapper threadDownloaderFileManagerWrapper,
+            AppConstants appConstants
+    ) {
+        Logger.deps("ThreadDownloadCompletionHelper");
+        return new ThreadDownloadCompletionHelper(
+                modelComponent.getKurobaDatabase(),
+                chanPostImageRepository,
+                threadDownloaderFileManagerWrapper.getFileManager(),
+                appConstants
+        );
+    }
+
+    @Singleton
+    @Provides
     public ThreadDownloadingDelegate provideThreadDownloadingDelegate(
             AppConstants appConstants,
+            CoroutineScope appScope,
             Lazy<RealDownloaderOkHttpClient> realDownloaderOkHttpClient,
             SiteManager siteManager,
             SiteResolver siteResolver,
@@ -890,11 +925,14 @@ public class ManagerModule {
             ThreadDownloadProgressNotifier threadDownloadProgressNotifier,
             ThreadDownloaderPersistPostsInDatabaseUseCase threadDownloaderPersistPostsInDatabaseUseCase,
             RateLimitManager rateLimitManager,
-            MediaMetadataExtractor mediaMetadataExtractor
+            MediaMetadataExtractor mediaMetadataExtractor,
+            MediaDownloadRetryHelper mediaDownloadRetryHelper,
+            ThreadDownloadCompletionHelper threadDownloadCompletionHelper
     ) {
         Logger.deps("ThreadDownloadingDelegate");
         return new ThreadDownloadingDelegate(
                 appConstants,
+                appScope,
                 realDownloaderOkHttpClient,
                 siteManager,
                 siteResolver,
@@ -906,7 +944,9 @@ public class ManagerModule {
                 threadDownloadProgressNotifier,
                 threadDownloaderPersistPostsInDatabaseUseCase,
                 rateLimitManager,
-                mediaMetadataExtractor
+                mediaMetadataExtractor,
+                mediaDownloadRetryHelper,
+                threadDownloadCompletionHelper
         );
     }
 

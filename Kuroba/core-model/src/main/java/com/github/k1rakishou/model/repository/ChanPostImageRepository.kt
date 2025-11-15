@@ -44,4 +44,28 @@ class ChanPostImageRepository(
     }
   }
 
+  suspend fun countNonDeletedPostImagesByOwnerThreadDatabaseId(threadDatabaseId: Long): ModularResult<Int> {
+    return applicationScope.dbCall {
+      return@dbCall tryWithTransaction {
+        return@tryWithTransaction chanPostImageLocalSource.countNonDeletedPostImagesByOwnerThreadDatabaseId(threadDatabaseId)
+      }
+    }
+  }
+
+  suspend fun countDeletedPostImagesByOwnerThreadDatabaseId(threadDatabaseId: Long): ModularResult<Int> {
+    return applicationScope.dbCall {
+      return@dbCall tryWithTransaction {
+        return@tryWithTransaction chanPostImageLocalSource.countDeletedPostImagesByOwnerThreadDatabaseId(threadDatabaseId)
+      }
+    }
+  }
+
+  suspend fun countImagesByDeletedStatusByOwnerThreadDatabaseId(threadDatabaseId: Long): ModularResult<Pair<Int, Int>> {
+    return applicationScope.dbCall {
+      return@dbCall tryWithTransaction {
+        return@tryWithTransaction chanPostImageLocalSource.countImagesByDeletedStatusByOwnerThreadDatabaseId(threadDatabaseId)
+      }
+    }
+  }
+
 }

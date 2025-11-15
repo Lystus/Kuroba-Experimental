@@ -36,11 +36,15 @@ import com.github.k1rakishou.model.repository.ChanPostImageRepository
 import com.github.k1rakishou.model.repository.ChanPostRepository
 import dagger.Lazy
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import okhttp3.HttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -53,6 +57,7 @@ import kotlin.time.measureTimedValue
 
 class ThreadDownloadingDelegate(
   private val appConstants: AppConstants,
+  private val appScope: CoroutineScope,
   private val downloaderOkHttpClient: Lazy<RealDownloaderOkHttpClient>,
   private val siteManager: SiteManager,
   private val siteResolver: SiteResolver,
@@ -64,7 +69,9 @@ class ThreadDownloadingDelegate(
   private val threadDownloadProgressNotifier: ThreadDownloadProgressNotifier,
   private val threadDownloaderPersistPostsInDatabaseUseCase: ThreadDownloaderPersistPostsInDatabaseUseCase,
   private val rateLimitManager: RateLimitManager,
-  private val mediaMetadataExtractor: MediaMetadataExtractor
+  private val mediaMetadataExtractor: MediaMetadataExtractor,
+  private val mediaDownloadRetryHelper: MediaDownloadRetryHelper,
+  private val threadDownloadCompletionHelper: ThreadDownloadCompletionHelper
 ) {
   private val fileManager: FileManager
     get() = threadDownloaderFileManagerWrapper.fileManager
@@ -105,6 +112,9 @@ class ThreadDownloadingDelegate(
     // Cleanup incomplete downloads and temporary files from previous sessions
     cleanupIncompleteDownloads()
 
+    // Cleanup old media download attempt records (older than 30 days)
+    mediaDownloadRetryHelper.cleanupOldAttempts()
+
     if (!threadDownloadManager.hasActiveThreads()) {
       Logger.d(TAG, "doWorkInternal() no active threads left, exiting")
       return
@@ -123,7 +133,7 @@ class ThreadDownloadingDelegate(
 
     threadDownloads.forEachIndexed { index, threadDownload ->
       try {
-        if (outOfDiskSpaceError.get() || canceled.get()) {
+        if (canceled.get()) {
           return@forEachIndexed
         }
 
@@ -153,6 +163,11 @@ class ThreadDownloadingDelegate(
         Logger.e(TAG, "doWorkInternal() ${threadDownload.threadDescriptor} canceled")
         canceled.set(true)
       }
+    }
+
+    // NEW: Log disk space errors (notification would be shown in UI when user opens archive)
+    if (outOfDiskSpaceError.get()) {
+      Logger.e(TAG, "doWorkInternal() One or more threads stopped due to insufficient disk space")
     }
 
     coroutineContext[Job.Key]?.invokeOnCompletion { cause ->
@@ -237,8 +252,21 @@ class ThreadDownloadingDelegate(
         "outOfDiskSpaceError=${outOfDiskSpaceError.get()}")
     }
 
+    // NEW: Handle disk space error for this specific thread
+    if (outOfDiskSpaceError.get()) {
+      Logger.e(TAG, "processThread($index/$total) Out of disk space for $threadDescriptor, stopping download")
+      threadDownloadManager.updateThreadDownload(
+        threadDescriptor = threadDescriptor,
+        updaterFunc = { it.copy(status = ThreadDownload.Status.Stopped) }
+      )
+      threadDownloadManager.onDownloadProcessed(
+        threadDescriptor = threadDescriptor,
+        resultMessage = "Out of disk space"
+      )
+      return
+    }
+
     val resultMessage = when {
-      outOfDiskSpaceError.get() -> "Out of disk space error"
       outputDirError.get() -> "Output directory access error"
       else -> null
     }
@@ -248,31 +276,51 @@ class ThreadDownloadingDelegate(
       resultMessage = resultMessage
     )
 
-    // Check if thread should be marked as completed
-    val shouldComplete = if (downloadResult.archived || downloadResult.closed || downloadResult.deleted) {
-      // For archived/closed/deleted threads, only mark as completed if all media has been downloaded
-      // or if media download is disabled
-      when {
-        !threadDownload.downloadMedia -> {
-          // Media download is disabled, so complete the thread
-          Logger.d(TAG, "processThread($index/$total) completing thread, media download disabled")
-          true
-        }
-        else -> {
-          // Always check if all media has been downloaded, regardless of whether we could
-          // download more media in this run (network conditions, rate limits, etc.)
-          val allMediaDownloaded = isAllMediaDownloaded(threadDescriptor, threadDownload.ownerThreadDatabaseId)
-          Logger.d(TAG, "processThread($index/$total) archived/closed/deleted thread: " +
-            "allMediaDownloaded=$allMediaDownloaded, canProcessThreadMedia=$canProcessThreadMedia")
-          allMediaDownloaded
-        }
-      }
+    // Phase 3: Track download cycles and progress for archived threads
+    val mediaStatusAfter = if (downloadResult.archived || downloadResult.closed || downloadResult.deleted) {
+      threadDownloadCompletionHelper.analyzeMediaDownloadStatus(threadDescriptor, ownerThreadDatabaseId)
     } else {
-      false
+      null
     }
 
-    if (shouldComplete) {
-      threadDownloadManager.completeDownloading(threadDescriptor)
+    // Update cycle tracking
+    threadDownloadManager.updateThreadDownload(threadDescriptor) { download ->
+      val progressMade = mediaStatusAfter != null && 
+        mediaStatusAfter.successCount > (download.downloadCyclesCount - 1) // Rough progress check
+      
+      download.copy(
+        downloadCyclesCount = download.downloadCyclesCount + 1,
+        lastProgressTime = if (progressMade) System.currentTimeMillis() else download.lastProgressTime,
+        cyclesSinceProgress = if (progressMade) 0 else (download.cyclesSinceProgress + 1)
+      )
+    }
+
+    // Phase 2: Use smart completion logic
+    val completionDecision = threadDownloadCompletionHelper.shouldCompleteDownload(
+      threadDownload = threadDownload,
+      downloadResult = downloadResult,
+      ownerThreadDatabaseId = ownerThreadDatabaseId
+    )
+
+    when (completionDecision) {
+      is CompletionDecision.Complete -> {
+        Logger.d(TAG, "processThread($index/$total) completing thread: ${completionDecision.reason}")
+        threadDownloadManager.completeDownloading(
+          threadDescriptor = threadDescriptor,
+          completionMessage = completionDecision.reason
+        )
+      }
+      is CompletionDecision.CompleteWithWarning -> {
+        Logger.w(TAG, "processThread($index/$total) completing thread with warning: ${completionDecision.reason}")
+        threadDownloadManager.completeDownloading(
+          threadDescriptor = threadDescriptor,
+          completionMessage = completionDecision.reason
+        )
+      }
+      is CompletionDecision.KeepRunning -> {
+        Logger.d(TAG, "processThread($index/$total) continuing download: ${completionDecision.reason}")
+        // Status stays Running
+      }
     }
 
     val status = "archived: ${downloadResult.archived}, " +
@@ -280,7 +328,7 @@ class ThreadDownloadingDelegate(
       "deleted: ${downloadResult.deleted}, " +
       "outOfDiskSpace: ${outOfDiskSpaceError.get()}, " +
       "outputDirError: ${outputDirError.get()}, " +
-      "shouldComplete: $shouldComplete"
+      "decision: $completionDecision"
 
     Logger.d(TAG, "processThread($index/$total) loadThreadOrCatalog($threadDescriptor) end, status: $status")
   }
@@ -1042,6 +1090,50 @@ class ThreadDownloadingDelegate(
       }
       
       Logger.d(TAG, "cleanupIncompleteDownloads() completed")
+      
+      // NEW: Async status validation for threads with Running status
+      appScope.launch(Dispatchers.IO) {
+        try {
+          val allThreadDownloads = threadDownloadManager.getAllThreadDownloads()
+          val runningThreads = allThreadDownloads.filter { it.status.isRunning() }
+          
+          if (runningThreads.isEmpty()) {
+            Logger.d(TAG, "No running threads to validate")
+            return@launch
+          }
+          
+          Logger.d(TAG, "Validating ${runningThreads.size} running threads for completion")
+          
+          runningThreads.forEach { threadDownload ->
+            try {
+              val isComplete = withTimeout(5000) {  // 5 second timeout per thread
+                isAllMediaDownloaded(
+                  threadDescriptor = threadDownload.threadDescriptor,
+                  ownerThreadDatabaseId = threadDownload.ownerThreadDatabaseId
+                )
+              }
+              
+              if (isComplete) {
+                Logger.d(TAG, "Thread ${threadDownload.threadDescriptor} is complete, updating status")
+                threadDownloadManager.updateThreadDownload(
+                  threadDescriptor = threadDownload.threadDescriptor,
+                  updaterFunc = { it.copy(status = ThreadDownload.Status.Completed) }
+                )
+              } else {
+                Logger.d(TAG, "Thread ${threadDownload.threadDescriptor} is incomplete, will process")
+              }
+            } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+              Logger.e(TAG, "Timeout validating ${threadDownload.threadDescriptor}, assuming incomplete")
+            } catch (e: Exception) {
+              Logger.e(TAG, "Error validating ${threadDownload.threadDescriptor}", e)
+            }
+          }
+          
+          Logger.d(TAG, "Status validation complete")
+        } catch (e: Exception) {
+          Logger.e(TAG, "Status validation failed", e)
+        }
+      }
     } catch (error: Throwable) {
       Logger.e(TAG, "cleanupIncompleteDownloads() error", error)
     }

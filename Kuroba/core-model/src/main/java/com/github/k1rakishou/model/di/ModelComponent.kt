@@ -41,6 +41,7 @@ import javax.inject.Singleton
 )
 interface ModelComponent {
   fun getGson(): Gson
+  fun getKurobaDatabase(): com.github.k1rakishou.model.KurobaDatabase
   fun getDatabaseMetaRepository(): DatabaseMetaRepository
   fun getMediaServiceLinkExtraContentRepository(): MediaServiceLinkExtraContentRepository
   fun getSeenPostRepository(): SeenPostRepository

@@ -657,10 +657,24 @@ class LocalArchiveController(
               ChanPostUtils.getReadableFileSize(stats!!.mediaTotalDiskSize)
             }
 
+            val mediaCountText = remember(
+              key1 = stats!!.downloadedMediaCount, 
+              key2 = stats!!.deletedMediaCount, 
+              key3 = stats!!.hasError
+            ) {
+              if (stats!!.hasError) {
+                "Error loading counts"
+              } else if (stats!!.deletedMediaCount > 0) {
+                "${stats!!.downloadedMediaCount} active / ${stats!!.deletedMediaCount} deleted"
+              } else {
+                "${stats!!.downloadedMediaCount}"
+              }
+            }
+
             val statsText = stringResource(
               R.string.controller_local_archive_additional_thread_stats,
               stats!!.downloadedPostsCount,
-              stats!!.downloadedMediaCount,
+              mediaCountText,
               formattedDiskSize
             )
 

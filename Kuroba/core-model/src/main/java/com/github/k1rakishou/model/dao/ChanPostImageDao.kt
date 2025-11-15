@@ -11,6 +11,11 @@ import com.github.k1rakishou.model.entity.chan.post.ChanPostImageEntity
 import com.github.k1rakishou.model.entity.chan.thread.ChanThreadEntity
 import okhttp3.HttpUrl
 
+data class ImageCountsByDeletedStatus(
+  val activeCount: Int,
+  val deletedCount: Int
+)
+
 @Dao
 abstract class ChanPostImageDao {
 
@@ -75,6 +80,49 @@ abstract class ChanPostImageDao {
     WHERE ${ChanThreadEntity.THREAD_ID_COLUMN_NAME} = :threadId
   """)
   abstract suspend fun countAllByThreadId(threadId: Long): Int
+
+  @Query("""
+    SELECT COUNT(*)
+    FROM ${ChanPostImageEntity.TABLE_NAME} post_images
+    LEFT JOIN ${ChanPostIdEntity.TABLE_NAME} post_ids
+        ON post_images.${ChanPostImageEntity.OWNER_POST_ID_COLUMN_NAME} = post_ids.${ChanPostIdEntity.POST_ID_COLUMN_NAME}
+    LEFT JOIN ${ChanThreadEntity.TABLE_NAME} threads
+        ON post_ids.${ChanPostIdEntity.OWNER_THREAD_ID_COLUMN_NAME} = threads.${ChanThreadEntity.THREAD_ID_COLUMN_NAME}
+    LEFT JOIN chan_post posts
+        ON posts.chan_post_id = post_ids.post_id
+    WHERE threads.thread_id = :threadId
+        AND (posts.deleted IS NULL OR posts.deleted = 0)
+  """)
+  abstract suspend fun countNonDeletedByThreadId(threadId: Long): Int
+
+  @Query("""
+    SELECT COUNT(*)
+    FROM ${ChanPostImageEntity.TABLE_NAME} post_images
+    LEFT JOIN ${ChanPostIdEntity.TABLE_NAME} post_ids
+        ON post_images.${ChanPostImageEntity.OWNER_POST_ID_COLUMN_NAME} = post_ids.${ChanPostIdEntity.POST_ID_COLUMN_NAME}
+    LEFT JOIN ${ChanThreadEntity.TABLE_NAME} threads
+        ON post_ids.${ChanPostIdEntity.OWNER_THREAD_ID_COLUMN_NAME} = threads.${ChanThreadEntity.THREAD_ID_COLUMN_NAME}
+    LEFT JOIN chan_post posts
+        ON posts.chan_post_id = post_ids.post_id
+    WHERE threads.thread_id = :threadId
+        AND posts.deleted = 1
+  """)
+  abstract suspend fun countDeletedByThreadId(threadId: Long): Int
+
+  @Query("""
+    SELECT 
+        COALESCE(SUM(CASE WHEN posts.deleted IS NULL OR posts.deleted = 0 THEN 1 ELSE 0 END), 0) as activeCount,
+        COALESCE(SUM(CASE WHEN posts.deleted = 1 THEN 1 ELSE 0 END), 0) as deletedCount
+    FROM ${ChanPostImageEntity.TABLE_NAME} post_images
+    LEFT JOIN ${ChanPostIdEntity.TABLE_NAME} post_ids
+        ON post_images.${ChanPostImageEntity.OWNER_POST_ID_COLUMN_NAME} = post_ids.${ChanPostIdEntity.POST_ID_COLUMN_NAME}
+    LEFT JOIN ${ChanThreadEntity.TABLE_NAME} threads
+        ON post_ids.${ChanPostIdEntity.OWNER_THREAD_ID_COLUMN_NAME} = threads.${ChanThreadEntity.THREAD_ID_COLUMN_NAME}
+    LEFT JOIN chan_post posts
+        ON posts.chan_post_id = post_ids.post_id
+    WHERE threads.${ChanThreadEntity.THREAD_ID_COLUMN_NAME} = :threadId
+  """)
+  abstract suspend fun countImagesByDeletedStatus(threadId: Long): ImageCountsByDeletedStatus?
 
   @Delete
   abstract suspend fun delete(chanPostImageEntity: ChanPostImageEntity)

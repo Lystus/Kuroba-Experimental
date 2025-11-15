@@ -64,4 +64,25 @@ class ChanPostImageLocalSource(
     return chanPostImageDao.countAllByThreadId(threadDatabaseId)
   }
 
+  suspend fun countNonDeletedPostImagesByOwnerThreadDatabaseId(threadDatabaseId: Long): Int {
+    ensureInTransaction()
+
+    return chanPostImageDao.countNonDeletedByThreadId(threadDatabaseId)
+  }
+
+  suspend fun countDeletedPostImagesByOwnerThreadDatabaseId(threadDatabaseId: Long): Int {
+    ensureInTransaction()
+
+    return chanPostImageDao.countDeletedByThreadId(threadDatabaseId)
+  }
+
+  suspend fun countImagesByDeletedStatusByOwnerThreadDatabaseId(threadDatabaseId: Long): Pair<Int, Int> {
+    ensureInTransaction()
+
+    val counts = chanPostImageDao.countImagesByDeletedStatus(threadDatabaseId)
+      ?: return Pair(0, 0)
+    
+    return Pair(counts.activeCount, counts.deletedCount)
+  }
+
 }

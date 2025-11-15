@@ -17,7 +17,10 @@ object ThreadDownloadMapper {
       createdOn = threadDownload.createdOn,
       threadThumbnailUrl = threadDownload.threadThumbnailUrl,
       lastUpdateTime = threadDownload.lastUpdateTime,
-      downloadResultMsg = threadDownload.downloadResultMsg
+      downloadResultMsg = threadDownload.downloadResultMsg,
+      downloadCyclesCount = threadDownload.downloadCyclesCount,
+      lastProgressTime = threadDownload.lastProgressTime,
+      cyclesSinceProgress = threadDownload.cyclesSinceProgress
     )
   }
 
@@ -34,7 +37,10 @@ object ThreadDownloadMapper {
       createdOn = threadDownloadEntity.createdOn,
       threadThumbnailUrl = threadDownloadEntity.threadThumbnailUrl,
       lastUpdateTime = threadDownloadEntity.lastUpdateTime,
-      downloadResultMsg = threadDownloadEntity.downloadResultMsg
+      downloadResultMsg = threadDownloadEntity.downloadResultMsg,
+      downloadCyclesCount = threadDownloadEntity.downloadCyclesCount,
+      lastProgressTime = threadDownloadEntity.lastProgressTime,
+      cyclesSinceProgress = threadDownloadEntity.cyclesSinceProgress
     )
   }
 

@@ -1335,6 +1335,7 @@ If you ever log out or if the passcode expires you will have to change reply mod
     <string name="image_saver_local_images_on_disk">Local images</string>
     <string name="image_saver_duplicates">Duplicate images</string>
     <string name="image_saver_out_of_disk_space">Out of disk space!</string>
+    <string name="thread_download_out_of_disk_space">Thread downloads paused - insufficient storage space</string>
     <string name="image_saver_failed_to_access_root_dir">Failed to access root directory!\nClick \"show settings\" and then check that it exists and you have access to it!</string>
     <string name="image_saver_root_dir_is_inaccessible">Root directory is inaccessible</string>
     <string name="image_saver_root_uri_is_not_a_dir">Uri \'%1$s\' is not a directory</string>
@@ -1371,7 +1372,7 @@ If you ever log out or if the passcode expires you will have to change reply mod
     <string name="controller_local_archive_show_all_threads">ALL</string>
     <string name="controller_local_archive_show_downloading_threads">DOWNLOADING</string>
     <string name="controller_local_archive_show_downloaded_threads">DOWNLOADED</string>
-    <string name="controller_local_archive_additional_thread_stats">Posts: %1$d, Media: %2$d, Media on disk: %3$s</string>
+    <string name="controller_local_archive_additional_thread_stats">Posts: %1$d, Media: %2$s, Media on disk: %3$s</string>
     <string name="controller_local_archive_export_threads">Export threads</string>
     <string name="controller_local_archive_export_thread_media">Export thread media</string>
     <string name="controller_local_archive_exported_format">Exported %1$d / %2$d</string>

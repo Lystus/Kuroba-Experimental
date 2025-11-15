@@ -234,7 +234,10 @@ class ThreadDownloadManager(
     Logger.d(TAG, "stopDownloading() success=$updated, threadDescriptor=$threadDescriptor")
   }
 
-  suspend fun completeDownloading(threadDescriptor: ChanDescriptor.ThreadDescriptor) {
+  suspend fun completeDownloading(
+    threadDescriptor: ChanDescriptor.ThreadDescriptor,
+    completionMessage: String? = null
+  ) {
     ensureInitialized()
 
     val updated = updateThreadDownload(threadDescriptor, updaterFunc = { threadDownload ->
@@ -243,14 +246,17 @@ class ThreadDownloadManager(
         return@updateThreadDownload null
       }
 
-      return@updateThreadDownload threadDownload.copy(status = ThreadDownload.Status.Completed)
+      return@updateThreadDownload threadDownload.copy(
+        status = ThreadDownload.Status.Completed,
+        downloadResultMsg = completionMessage ?: threadDownload.downloadResultMsg
+      )
     })
 
     if (updated) {
       _threadDownloadUpdateFlow.emit(Event.CompleteDownload(threadDescriptor))
     }
 
-    Logger.d(TAG, "completeDownloading() success=$updated, threadDescriptor=$threadDescriptor")
+    Logger.d(TAG, "completeDownloading() success=$updated, threadDescriptor=$threadDescriptor, message=$completionMessage")
   }
 
   suspend fun onDownloadProcessed(
@@ -479,6 +485,10 @@ class ThreadDownloadManager(
       "downloadMedia=$downloadMedia, success=$success")
   }
 
+  suspend fun awaitInitialization() {
+    ensureInitialized()
+  }
+
   private suspend fun ensureInitialized() {
     initializationRunnable.runIfNotYet { initializeThreadDownloadManagerInternal() }
   }
@@ -490,13 +500,25 @@ class ThreadDownloadManager(
 
       val time = measureTime {
         val initResult = threadDownloadRepository.initialize()
-        if (initResult is ModularResult.Value) {
-          val threadDownloads = initResult.value
+        
+        when (initResult) {
+          is ModularResult.Value -> {
+            val threadDownloads = initResult.value
 
-          mutex.withLock {
-            threadDownloads.forEach { threadDownload ->
-              threadDownloadsMap[threadDownload.threadDescriptor] = threadDownload
+            mutex.withLock {
+              threadDownloads.forEach { threadDownload ->
+                threadDownloadsMap[threadDownload.threadDescriptor] = threadDownload
+              }
             }
+            
+            Logger.d(TAG, "Successfully loaded ${threadDownloads.size} thread downloads")
+          }
+          is ModularResult.Error -> {
+            val error = initResult.error
+            Logger.e(TAG, "Failed to initialize thread downloads", error)
+            
+            // Emit error event so coordinator and UI can handle it
+            _threadDownloadUpdateFlow.emit(Event.InitializationFailed(error))
           }
         }
       }
@@ -508,6 +530,7 @@ class ThreadDownloadManager(
 
   sealed class Event {
     object Initialized : Event()
+    data class InitializationFailed(val error: Throwable) : Event()
     data class StartDownload(val threadDescriptor: ChanDescriptor.ThreadDescriptor) : Event()
     data class StopDownload(val threadDescriptor: ChanDescriptor.ThreadDescriptor) : Event()
     data class CompleteDownload(val threadDescriptor: ChanDescriptor.ThreadDescriptor) : Event()

@@ -18,6 +18,7 @@ import com.github.k1rakishou.chan.ui.view.bottom_menu_panel.BottomMenuPanelItem
 import com.github.k1rakishou.chan.ui.view.bottom_menu_panel.BottomMenuPanelItemId
 import com.github.k1rakishou.common.AppConstants
 import com.github.k1rakishou.common.ModularResult
+import com.github.k1rakishou.common.errorMessageOrClassName
 import com.github.k1rakishou.common.extractFileName
 import com.github.k1rakishou.common.mutableListWithCap
 import com.github.k1rakishou.core_logger.Logger
@@ -81,6 +82,10 @@ class LocalArchiveViewModel : BaseViewModel() {
   val controllerTitleInfoUpdatesFlow: StateFlow<ControllerTitleInfo?>
     get() = _controllerTitleInfoUpdatesFlow.asStateFlow()
 
+  private val _initializationError = MutableStateFlow<String?>(null)
+  val initializationError: StateFlow<String?>
+    get() = _initializationError.asStateFlow()
+
   private val additionalThreadDownloadStats = mutableMapOf<ChanDescriptor.ThreadDescriptor, MutableState<AdditionalThreadDownloadStats?>>()
 
   private var _rememberedFirstVisibleItemIndex: Int = 0
@@ -99,7 +104,17 @@ class LocalArchiveViewModel : BaseViewModel() {
     mainScope.launch {
       threadDownloadManager.threadDownloadUpdateFlow
         .debounce(1.seconds)
-        .collect { refreshCacheAndReload() }
+        .collect { event ->
+          when (event) {
+            is ThreadDownloadManager.Event.InitializationFailed -> {
+              _initializationError.value = event.error.errorMessageOrClassName()
+              Logger.e(TAG, "ThreadDownloadManager initialization failed", event.error)
+            }
+            else -> {
+              refreshCacheAndReload()
+            }
+          }
+        }
     }
 
     mainScope.launch {
@@ -466,17 +481,36 @@ class LocalArchiveViewModel : BaseViewModel() {
         val directory = File(appConstants.threadDownloaderCacheDir, directoryName)
         val ownerThreadDatabaseId = threadDownloadView.ownerThreadDatabaseId
 
-        val files = directory.listFiles()
-        val filesTotalSize = files?.sumOf { file -> file.length() } ?: 0L
-        val mediaCount = files?.size?.div(2) ?: 0
+        // Calculate file size with directory validation
+        val filesTotalSize = when {
+          !directory.exists() -> 0L
+          !directory.isDirectory -> {
+            // Corruption detected - cache directory is actually a file
+            Logger.e(TAG, "Cache directory is not a directory: ${directory.absolutePath}")
+            0L
+          }
+          else -> directory.listFiles()?.sumOf { file -> file.length() } ?: 0L
+        }
+        
+        // Use atomic query to get both counts in single transaction
+        val mediaCountsResult = chanPostImageRepository
+          .countImagesByDeletedStatusByOwnerThreadDatabaseId(ownerThreadDatabaseId)
+        
+        val postsCountResult = chanPostRepository.countThreadPosts(ownerThreadDatabaseId)
 
-        val postsCount = chanPostRepository.countThreadPosts(ownerThreadDatabaseId)
-          .valueOrNull() ?: 0
+        // Check for errors in database queries or filesystem corruption
+        val hasError = mediaCountsResult.isError() || postsCountResult.isError() || 
+          (directory.exists() && !directory.isDirectory)
+        
+        val (activeMediaCount, deletedMediaCount) = mediaCountsResult.valueOrNull() ?: Pair(0, 0)
+        val postsCount = postsCountResult.valueOrNull() ?: 0
 
         return@withContext AdditionalThreadDownloadStats(
           postsCount,
-          mediaCount,
-          filesTotalSize
+          activeMediaCount,
+          deletedMediaCount,
+          filesTotalSize,
+          hasError
         )
       }
 
@@ -603,7 +637,9 @@ class LocalArchiveViewModel : BaseViewModel() {
   data class AdditionalThreadDownloadStats(
     val downloadedPostsCount: Int,
     val downloadedMediaCount: Int,
-    val mediaTotalDiskSize: Long
+    val deletedMediaCount: Int,
+    val mediaTotalDiskSize: Long,
+    val hasError: Boolean = false
   )
 
   sealed class ThreadDownloadThumbnailLocation {

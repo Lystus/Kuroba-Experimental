@@ -34,6 +34,7 @@ import com.github.k1rakishou.model.dao.ChanThreadViewableInfoDao
 import com.github.k1rakishou.model.dao.CompositeCatalogDao
 import com.github.k1rakishou.model.dao.DatabaseMetaDao
 import com.github.k1rakishou.model.dao.ImageDownloadRequestDao
+import com.github.k1rakishou.model.data.download.MediaDownloadAttemptDao
 import com.github.k1rakishou.model.dao.MediaServiceLinkExtraContentDao
 import com.github.k1rakishou.model.dao.NavHistoryDao
 import com.github.k1rakishou.model.dao.SeenPostDao
@@ -68,6 +69,7 @@ import com.github.k1rakishou.model.entity.chan.site.ChanSiteIdEntity
 import com.github.k1rakishou.model.entity.chan.thread.ChanThreadEntity
 import com.github.k1rakishou.model.entity.chan.thread.ChanThreadViewableInfoEntity
 import com.github.k1rakishou.model.entity.download.ImageDownloadRequestEntity
+import com.github.k1rakishou.model.entity.download.MediaDownloadAttemptEntity
 import com.github.k1rakishou.model.entity.download.ThreadDownloadEntity
 import com.github.k1rakishou.model.entity.navigation.NavHistoryElementIdEntity
 import com.github.k1rakishou.model.entity.navigation.NavHistoryElementInfoEntity
@@ -108,6 +110,7 @@ import com.github.k1rakishou.model.migrations.Migration_v39_to_v40
 import com.github.k1rakishou.model.migrations.Migration_v3_to_v4
 import com.github.k1rakishou.model.migrations.Migration_v40_to_v41
 import com.github.k1rakishou.model.migrations.Migration_v41_to_v42
+import com.github.k1rakishou.model.migrations.Migration_v42_to_v43
 import com.github.k1rakishou.model.migrations.Migration_v4_to_v5
 import com.github.k1rakishou.model.migrations.Migration_v5_to_v6
 import com.github.k1rakishou.model.migrations.Migration_v6_to_v7
@@ -150,13 +153,14 @@ import java.util.concurrent.atomic.AtomicInteger
     ThreadBookmarkGroupEntryEntity::class,
     ImageDownloadRequestEntity::class,
     ThreadDownloadEntity::class,
-    CompositeCatalogEntity::class
+    CompositeCatalogEntity::class,
+    MediaDownloadAttemptEntity::class
   ],
   views = [
     ChanThreadsWithPosts::class,
     OldChanPostThread::class
   ],
-  version = 42,
+  version = 43,
   exportSchema = true
 )
 @TypeConverters(
@@ -199,6 +203,7 @@ abstract class KurobaDatabase : RoomDatabase() {
   abstract fun imageDownloadRequestDao(): ImageDownloadRequestDao
   abstract fun threadDownloadDao(): ThreadDownloadDao
   abstract fun compositeCatalogDao(): CompositeCatalogDao
+  abstract fun mediaDownloadAttemptDao(): MediaDownloadAttemptDao
 
   suspend fun ensureInTransaction() {
     require(inTransaction()) { "Must be executed in a transaction!" }
@@ -291,6 +296,7 @@ abstract class KurobaDatabase : RoomDatabase() {
           Migration_v39_to_v40(),
           Migration_v40_to_v41(),
           Migration_v41_to_v42(),
+          Migration_v42_to_v43(),
         )
         .fallbackToDestructiveMigrationOnDowngrade()
         .build()

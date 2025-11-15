@@ -12,12 +12,16 @@ import com.github.k1rakishou.chan.core.manager.ThreadDownloadManager
 import com.github.k1rakishou.common.AndroidUtils
 import com.github.k1rakishou.common.AppConstants
 import com.github.k1rakishou.core_logger.Logger
+import androidx.work.WorkInfo
 import dagger.Lazy
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.reactive.asFlow
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.time.Duration.Companion.seconds
 
 class ThreadDownloadingCoordinator(
@@ -33,6 +37,8 @@ class ThreadDownloadingCoordinator(
   
   private val rateLimitManager: com.github.k1rakishou.chan.core.manager.RateLimitManager
     get() = _rateLimitManager.get()
+
+  private val startupRestartDone = AtomicBoolean(false)
 
   fun initialize() {
     appScope.launch {
@@ -59,15 +65,61 @@ class ThreadDownloadingCoordinator(
         }
       }
     }
+    
+    // NEW: Explicit startup check to handle active downloads on app startup
+    appScope.launch {
+      try {
+        delay(1000)  // Give flow collectors time to set up
+        threadDownloadManager.awaitInitialization()
+        
+        if (!startupRestartDone.compareAndSet(false, true)) {
+          Logger.d(TAG, "Startup restart already done, skipping")
+          return@launch
+        }
+        
+        val activeThreadsCount = threadDownloadManager.activeThreadsCount()
+        if (activeThreadsCount > 0) {
+          Logger.d(TAG, "Found $activeThreadsCount active threads on startup, restarting downloads")
+          startOrRestartThreadDownloading(
+            appContext = appContext, 
+            appConstants = appConstants, 
+            eager = true, 
+            immediate = true
+          )
+        } else {
+          Logger.d(TAG, "No active threads found on startup")
+        }
+      } catch (e: CancellationException) {
+        Logger.e(TAG, "Startup restart check cancelled", e)
+        throw e
+      } catch (e: Exception) {
+        Logger.e(TAG, "Startup restart check failed", e)
+      }
+    }
   }
 
   private suspend fun onThreadDownloadUpdateEvent(event: ThreadDownloadManager.Event) {
     when (event) {
       ThreadDownloadManager.Event.Initialized -> {
-        // no-op
+        // NEW: Handle initialization event if startup check hasn't run yet
+        if (!startupRestartDone.get()) {
+          delay(100)  // Brief delay to avoid race with explicit check
+          if (startupRestartDone.compareAndSet(false, true)) {
+            val activeThreadsCount = threadDownloadManager.activeThreadsCount()
+            if (activeThreadsCount > 0) {
+              Logger.d(TAG, "Event.Initialized triggered restart (found $activeThreadsCount active threads)")
+              startOrRestartThreadDownloading(
+                appContext = appContext, 
+                appConstants = appConstants, 
+                eager = true, 
+                immediate = true
+              )
+            }
+          }
+        }
       }
       is ThreadDownloadManager.Event.StartDownload -> {
-        startOrRestartThreadDownloading(appContext, appConstants, eager = true)
+        startOrRestartThreadDownloading(appContext, appConstants, eager = true, forceRestart = true)
       }
       is ThreadDownloadManager.Event.CancelDownload,
       is ThreadDownloadManager.Event.CompleteDownload,
@@ -75,6 +127,9 @@ class ThreadDownloadingCoordinator(
         if (!threadDownloadManager.hasActiveThreads()) {
           cancelThreadDownloading(appContext, appConstants)
         }
+      }
+      is ThreadDownloadManager.Event.InitializationFailed -> {
+        Logger.e(TAG, "ThreadDownloadManager initialization failed", event.error)
       }
     }
   }
@@ -85,19 +140,43 @@ class ThreadDownloadingCoordinator(
     suspend fun startOrRestartThreadDownloading(
       appContext: Context,
       appConstants: AppConstants,
-      eager: Boolean
+      eager: Boolean,
+      immediate: Boolean = false,
+      forceRestart: Boolean = false
     ) {
       if (AndroidUtils.isNotMainProcess()) {
         return
       }
 
       val tag = appConstants.threadDownloadWorkUniqueTag
-      Logger.d(TAG, "startOrRestartThreadDownloading() called tag=$tag, eager=$eager")
+      Logger.d(TAG, "startOrRestartThreadDownloading() called tag=$tag, eager=$eager, immediate=$immediate, forceRestart=$forceRestart")
 
-      val threadDownloadInterval = if (eager) {
-        TimeUnit.SECONDS.toMillis(5)
-      } else {
-        ChanSettings.threadDownloaderUpdateInterval.get().toLong()
+      // Check if work is already running
+      val existingWork = WorkManager
+        .getInstance(appContext)
+        .getWorkInfosForUniqueWork(tag)
+        .await()
+        .firstOrNull()
+
+      val policy = when {
+        forceRestart -> {
+          Logger.d(TAG, "Force restart requested")
+          ExistingWorkPolicy.REPLACE
+        }
+        existingWork?.state == WorkInfo.State.RUNNING -> {
+          Logger.d(TAG, "Work already running, keeping it")
+          ExistingWorkPolicy.KEEP
+        }
+        else -> {
+          Logger.d(TAG, "No running work, replacing any enqueued work")
+          ExistingWorkPolicy.REPLACE
+        }
+      }
+
+      val threadDownloadInterval = when {
+        immediate -> 0L  // Start immediately on startup
+        eager -> TimeUnit.SECONDS.toMillis(5)
+        else -> ChanSettings.threadDownloaderUpdateInterval.get().toLong()
       }
 
       val constraints = Constraints.Builder()
@@ -112,12 +191,12 @@ class ThreadDownloadingCoordinator(
 
       WorkManager
         .getInstance(appContext)
-        .enqueueUniqueWork(tag, ExistingWorkPolicy.REPLACE, workRequest)
+        .enqueueUniqueWork(tag, policy, workRequest)
         .result
         .await()
 
-      Logger.d(TAG, "startOrRestartThreadDownloading() enqueued work with tag=$tag, eager=$eager, " +
-          "threadDownloadInterval=$threadDownloadInterval")
+      Logger.d(TAG, "startOrRestartThreadDownloading() enqueued work with tag=$tag, policy=$policy, " +
+          "eager=$eager, immediate=$immediate, threadDownloadInterval=$threadDownloadInterval")
     }
 
     suspend fun cancelThreadDownloading(

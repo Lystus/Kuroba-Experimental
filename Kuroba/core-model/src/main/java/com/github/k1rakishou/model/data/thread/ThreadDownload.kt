@@ -12,7 +12,11 @@ data class ThreadDownload(
   var createdOn: DateTime,
   var threadThumbnailUrl: String?,
   var lastUpdateTime: DateTime?,
-  var downloadResultMsg: String?
+  var downloadResultMsg: String?,
+  // Cycle tracking for archived threads (prevent infinite loops)
+  var downloadCyclesCount: Int = 0,
+  var lastProgressTime: Long? = null,
+  var cyclesSinceProgress: Int = 0
 ) {
 
   enum class Status(val rawValue: Int) {
@@ -44,7 +48,10 @@ data class ThreadDownload(
       createdOn = DateTime.now(),
       threadThumbnailUrl = null,
       lastUpdateTime = null,
-      downloadResultMsg = null
+      downloadResultMsg = null,
+      downloadCyclesCount = 0,
+      lastProgressTime = null,
+      cyclesSinceProgress = 0
     )
   }
 }
