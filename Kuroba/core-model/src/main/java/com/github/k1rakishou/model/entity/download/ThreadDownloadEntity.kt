@@ -39,7 +39,9 @@ data class ThreadDownloadEntity(
   @ColumnInfo(name = LAST_PROGRESS_TIME_COLUMN_NAME)
   val lastProgressTime: Long? = null,
   @ColumnInfo(name = CYCLES_SINCE_PROGRESS_COLUMN_NAME)
-  val cyclesSinceProgress: Int = 0
+  val cyclesSinceProgress: Int = 0,
+  @ColumnInfo(name = LAST_KNOWN_SUCCESS_COUNT_COLUMN_NAME)
+  val lastKnownSuccessCount: Int = 0
 ) {
 
   companion object {
@@ -58,6 +60,7 @@ data class ThreadDownloadEntity(
     const val DOWNLOAD_CYCLES_COUNT_COLUMN_NAME = "download_cycles_count"
     const val LAST_PROGRESS_TIME_COLUMN_NAME = "last_progress_time"
     const val CYCLES_SINCE_PROGRESS_COLUMN_NAME = "cycles_since_progress"
+    const val LAST_KNOWN_SUCCESS_COUNT_COLUMN_NAME = "last_known_success_count"
 
   }
 }

@@ -237,11 +237,14 @@ class ThreadDownloadingDelegate(
 
       // Always try to download media for archived/deleted/closed threads that have media enabled
       // This helps with resuming incomplete downloads
+      val isArchivedThread = downloadResult.archived || downloadResult.closed || downloadResult.deleted
+      
       processThreadMedia(
         index = index,
         total = total,
         chanPostImages = chanPostImages,
         threadDescriptor = threadDescriptor,
+        isArchivedThread = isArchivedThread,
         outOfDiskSpaceError = outOfDiskSpaceError,
         outputDirError = outputDirError
       )
@@ -271,31 +274,7 @@ class ThreadDownloadingDelegate(
       else -> null
     }
 
-    threadDownloadManager.onDownloadProcessed(
-      threadDescriptor = threadDescriptor,
-      resultMessage = resultMessage
-    )
-
-    // Phase 3: Track download cycles and progress for archived threads
-    val mediaStatusAfter = if (downloadResult.archived || downloadResult.closed || downloadResult.deleted) {
-      threadDownloadCompletionHelper.analyzeMediaDownloadStatus(threadDescriptor, ownerThreadDatabaseId)
-    } else {
-      null
-    }
-
-    // Update cycle tracking
-    threadDownloadManager.updateThreadDownload(threadDescriptor) { download ->
-      val progressMade = mediaStatusAfter != null && 
-        mediaStatusAfter.successCount > (download.downloadCyclesCount - 1) // Rough progress check
-      
-      download.copy(
-        downloadCyclesCount = download.downloadCyclesCount + 1,
-        lastProgressTime = if (progressMade) System.currentTimeMillis() else download.lastProgressTime,
-        cyclesSinceProgress = if (progressMade) 0 else (download.cyclesSinceProgress + 1)
-      )
-    }
-
-    // Phase 2: Use smart completion logic
+    // Phase 2: Use smart completion logic FIRST (analyzes media status internally)
     val completionDecision = threadDownloadCompletionHelper.shouldCompleteDownload(
       threadDownload = threadDownload,
       downloadResult = downloadResult,
@@ -319,7 +298,55 @@ class ThreadDownloadingDelegate(
       }
       is CompletionDecision.KeepRunning -> {
         Logger.d(TAG, "processThread($index/$total) continuing download: ${completionDecision.reason}")
-        // Status stays Running
+        
+        // Phase 3: Track download cycles ONLY for threads that keep running
+        // Only track for archived/closed/deleted threads
+        val isArchived = downloadResult.archived || downloadResult.closed || downloadResult.deleted
+        if (isArchived) {
+          // Get current media status to check for actual progress
+          val mediaStatus = threadDownloadCompletionHelper.analyzeMediaDownloadStatus(
+            threadDescriptor = threadDescriptor,
+            ownerThreadDatabaseId = threadDownload.ownerThreadDatabaseId
+          )
+          
+          threadDownloadManager.updateThreadDownload(threadDescriptor) { download ->
+            val now = System.currentTimeMillis()
+            val currentSuccessCount = mediaStatus.successCount
+            val highestSuccessCount = download.lastKnownSuccessCount
+            
+            // Check if we made actual progress (more media downloaded than ever before)
+            // Use >= to handle the case where files might be re-downloaded after deletion
+            val madeProgress = currentSuccessCount >= highestSuccessCount && currentSuccessCount > 0
+            
+            // Track the highest success count we've ever seen
+            // This prevents false "no progress" detection if user deletes files
+            val newHighestSuccessCount = maxOf(currentSuccessCount, highestSuccessCount)
+            
+            val newCyclesSinceProgress = if (madeProgress && currentSuccessCount > highestSuccessCount) {
+              0  // Reset counter - we made NEW progress!
+            } else {
+              download.cyclesSinceProgress + 1  // Increment - no NEW progress
+            }
+            
+            Logger.d(TAG, "processThread($index/$total) cycle tracking: " +
+              "successCount=$currentSuccessCount (highest=$highestSuccessCount), " +
+              "madeProgress=$madeProgress, " +
+              "cyclesSinceProgress=$newCyclesSinceProgress")
+            
+            download.copy(
+              downloadCyclesCount = download.downloadCyclesCount + 1,
+              lastProgressTime = now,
+              cyclesSinceProgress = newCyclesSinceProgress,
+              lastKnownSuccessCount = newHighestSuccessCount
+            )
+          }
+        }
+        
+        // Update lastUpdateTime for running threads
+        threadDownloadManager.onDownloadProcessed(
+          threadDescriptor = threadDescriptor,
+          resultMessage = resultMessage
+        )
       }
     }
 
@@ -338,6 +365,7 @@ class ThreadDownloadingDelegate(
     total: Int,
     chanPostImages: List<ChanPostImage>,
     threadDescriptor: ChanDescriptor.ThreadDescriptor,
+    isArchivedThread: Boolean,
     outOfDiskSpaceError: AtomicBoolean,
     outputDirError: AtomicBoolean,
   ) {
@@ -426,6 +454,7 @@ class ThreadDownloadingDelegate(
           isThumbnail = true,
           name = thumbnailName,
           imageUrl = thumbnailUrl,
+          isArchivedThread = isArchivedThread,
           outOfDiskSpaceError = outOfDiskSpaceError,
           outputDirError = outputDirError
         )
@@ -451,6 +480,7 @@ class ThreadDownloadingDelegate(
           isThumbnail = false,
           name = fullImageName,
           imageUrl = fullImageUrl,
+          isArchivedThread = isArchivedThread,
           outOfDiskSpaceError = outOfDiskSpaceError,
           outputDirError = outputDirError
         )
@@ -476,9 +506,23 @@ class ThreadDownloadingDelegate(
     isThumbnail: Boolean,
     name: String,
     imageUrl: HttpUrl,
+    isArchivedThread: Boolean,
     outOfDiskSpaceError: AtomicBoolean,
     outputDirError: AtomicBoolean,
   ) {
+    // Check retry helper before attempting download
+    
+    val decision = mediaDownloadRetryHelper.shouldDownloadMedia(
+      url = imageUrl,
+      threadDescriptor = threadDescriptor,
+      isArchivedThread = isArchivedThread
+    )
+    
+    if (!decision.shouldProceed()) {
+      Logger.d(TAG, "downloadImage() skipping $name: ${(decision as MediaDownloadDecision.Skip).reason}")
+      return
+    }
+
     var outputFile = fileManager.findFile(outputDirectory, name)
     if (outputFile == null) {
       outputFile = fileManager.create(outputDirectory, listOf(FileSegment(name)))
@@ -497,7 +541,8 @@ class ThreadDownloadingDelegate(
         if (isFileSizeReasonable(fileSize, isThumbnail, -1L)) { // Will use fallback validation
           // Enhanced corruption detection: verify file header/magic numbers
           if (isValidImageFile(outputFile)) {
-            // File exists and appears valid, skip download
+            // File exists and appears valid, record success and skip download
+            mediaDownloadRetryHelper.recordSuccess(imageUrl)
             return
           } else {
             // File exists but appears corrupt based on header verification
@@ -547,6 +592,15 @@ class ThreadDownloadingDelegate(
 
     val response = okHttpClient.suspendCall(requestBuilder.build())
     if (!response.isSuccessful) {
+      // Record failure with retry helper
+      mediaDownloadRetryHelper.recordFailure(
+        url = imageUrl,
+        threadDescriptor = threadDescriptor,
+        httpCode = response.code,
+        error = null,
+        isArchivedThread = isArchivedThread
+      )
+      
       // Check for rate limiting (HTTP 429)
       if (response.code == 429) {
         val retryAfterSeconds = response.header("Retry-After")?.toLongOrNull()?.toInt() ?: 60
@@ -630,6 +684,9 @@ class ThreadDownloadingDelegate(
             downloadSuccess = true
             Logger.d(TAG, "downloadImage() successfully downloaded $name (${finalFileSize} bytes, expected: ${expectedContentLength})")
             
+            // Record success with retry helper
+            mediaDownloadRetryHelper.recordSuccess(imageUrl)
+            
             // Extract metadata for full media files (not thumbnails, only for MOVIE and GIF types)
             if (!isThumbnail && (postImage.type == ChanPostImageType.MOVIE || postImage.type == ChanPostImageType.GIF)) {
               val fileHash = postImage.fileHash
@@ -671,6 +728,15 @@ class ThreadDownloadingDelegate(
       if (error.isOutOfDiskSpaceError()) {
         outOfDiskSpaceError.set(true)
       }
+
+      // Record failure with retry helper
+      mediaDownloadRetryHelper.recordFailure(
+        url = imageUrl,
+        threadDescriptor = threadDescriptor,
+        httpCode = null,
+        error = error,
+        isArchivedThread = isArchivedThread
+      )
 
       Logger.e(TAG, "Failed to download image $name. Error: ${error.errorMessageOrClassName()}")
     } finally {
@@ -1091,49 +1157,9 @@ class ThreadDownloadingDelegate(
       
       Logger.d(TAG, "cleanupIncompleteDownloads() completed")
       
-      // NEW: Async status validation for threads with Running status
-      appScope.launch(Dispatchers.IO) {
-        try {
-          val allThreadDownloads = threadDownloadManager.getAllThreadDownloads()
-          val runningThreads = allThreadDownloads.filter { it.status.isRunning() }
-          
-          if (runningThreads.isEmpty()) {
-            Logger.d(TAG, "No running threads to validate")
-            return@launch
-          }
-          
-          Logger.d(TAG, "Validating ${runningThreads.size} running threads for completion")
-          
-          runningThreads.forEach { threadDownload ->
-            try {
-              val isComplete = withTimeout(5000) {  // 5 second timeout per thread
-                isAllMediaDownloaded(
-                  threadDescriptor = threadDownload.threadDescriptor,
-                  ownerThreadDatabaseId = threadDownload.ownerThreadDatabaseId
-                )
-              }
-              
-              if (isComplete) {
-                Logger.d(TAG, "Thread ${threadDownload.threadDescriptor} is complete, updating status")
-                threadDownloadManager.updateThreadDownload(
-                  threadDescriptor = threadDownload.threadDescriptor,
-                  updaterFunc = { it.copy(status = ThreadDownload.Status.Completed) }
-                )
-              } else {
-                Logger.d(TAG, "Thread ${threadDownload.threadDescriptor} is incomplete, will process")
-              }
-            } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
-              Logger.e(TAG, "Timeout validating ${threadDownload.threadDescriptor}, assuming incomplete")
-            } catch (e: Exception) {
-              Logger.e(TAG, "Error validating ${threadDownload.threadDescriptor}", e)
-            }
-          }
-          
-          Logger.d(TAG, "Status validation complete")
-        } catch (e: Exception) {
-          Logger.e(TAG, "Status validation failed", e)
-        }
-      }
+      // Removed premature validation that was marking active threads as complete
+      // The normal download cycle now handles completion checking properly using
+      // ThreadDownloadCompletionHelper which checks BOTH media status AND thread activity
     } catch (error: Throwable) {
       Logger.e(TAG, "cleanupIncompleteDownloads() error", error)
     }

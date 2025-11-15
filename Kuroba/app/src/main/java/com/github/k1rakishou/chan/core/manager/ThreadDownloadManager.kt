@@ -266,6 +266,12 @@ class ThreadDownloadManager(
     ensureInitialized()
 
     updateThreadDownload(threadDescriptor, updaterFunc = { threadDownload ->
+      // Don't update threads that have been completed or stopped
+      if (threadDownload.status == ThreadDownload.Status.Completed || 
+          threadDownload.status == ThreadDownload.Status.Stopped) {
+        return@updateThreadDownload null
+      }
+
       val updateTime = DateTime.now()
 
       return@updateThreadDownload threadDownload.copy(

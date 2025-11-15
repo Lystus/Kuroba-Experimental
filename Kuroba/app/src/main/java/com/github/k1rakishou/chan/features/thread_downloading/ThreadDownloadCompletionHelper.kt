@@ -25,25 +25,43 @@ class ThreadDownloadCompletionHelper(
   private val appConstants: AppConstants
 ) {
 
+  // Cache for media status analysis (threadDescriptor -> (timestamp, status))
+  private val mediaStatusCache = mutableMapOf<ChanDescriptor.ThreadDescriptor, Pair<Long, MediaDownloadStatus>>()
+  private val CACHE_TTL_MS = 30_000L // 30 seconds
+  
   /**
    * Analyze media download status for a thread.
    * Returns detailed statistics about success/failure counts.
+   * Results are cached for 30 seconds to avoid expensive file system scans.
    */
   suspend fun analyzeMediaDownloadStatus(
     threadDescriptor: ChanDescriptor.ThreadDescriptor,
     ownerThreadDatabaseId: Long
   ): MediaDownloadStatus = withContext(Dispatchers.IO) {
+    // Check cache first
+    val now = System.currentTimeMillis()
+    val cached = mediaStatusCache[threadDescriptor]
+    if (cached != null) {
+      val (timestamp, status) = cached
+      if (now - timestamp < CACHE_TTL_MS) {
+        // Cache hit - return cached result
+        return@withContext status
+      }
+    }
+    
     val chanPostImages = chanPostImageRepository.selectPostImagesByOwnerThreadDatabaseId(ownerThreadDatabaseId)
       .peekError { error -> Logger.e(TAG, "Failed to select images by threadId: $ownerThreadDatabaseId", error) }
       .valueOrNull() ?: emptyList()
 
     if (chanPostImages.isEmpty()) {
-      return@withContext MediaDownloadStatus(
+      val emptyStatus = MediaDownloadStatus(
         totalCount = 0,
         successCount = 0,
         permanentFailureCount = 0,
         retryableCount = 0
       )
+      mediaStatusCache[threadDescriptor] = now to emptyStatus
+      return@withContext emptyStatus
     }
 
     var totalCount = 0
@@ -93,12 +111,31 @@ class ThreadDownloadCompletionHelper(
       }
     }
 
-    return@withContext MediaDownloadStatus(
+    val status = MediaDownloadStatus(
       totalCount = totalCount,
       successCount = successCount,
       permanentFailureCount = permanentFailureCount,
       retryableCount = retryableCount
     )
+    
+    // Cache the result
+    mediaStatusCache[threadDescriptor] = now to status
+    
+    return@withContext status
+  }
+  
+  /**
+   * Invalidate cache for a specific thread (call after media downloads complete)
+   */
+  fun invalidateCache(threadDescriptor: ChanDescriptor.ThreadDescriptor) {
+    mediaStatusCache.remove(threadDescriptor)
+  }
+  
+  /**
+   * Clear all cached media status (call on app restart or memory pressure)
+   */
+  fun clearCache() {
+    mediaStatusCache.clear()
   }
 
   /**
@@ -111,9 +148,11 @@ class ThreadDownloadCompletionHelper(
     ownerThreadDatabaseId: Long
   ): CompletionDecision {
     val threadDescriptor = threadDownload.threadDescriptor
+    val isArchived = downloadResult.archived || downloadResult.closed || downloadResult.deleted
 
-    // Active threads never auto-complete
-    if (!downloadResult.archived && !downloadResult.closed && !downloadResult.deleted) {
+    // CRITICAL: Active threads should NEVER auto-complete, even if all media is downloaded
+    // New posts with new media might be added at any time
+    if (!isArchived) {
       return CompletionDecision.KeepRunning("Thread still active")
     }
 
@@ -126,8 +165,9 @@ class ThreadDownloadCompletionHelper(
     val mediaStatus = analyzeMediaDownloadStatus(threadDescriptor, ownerThreadDatabaseId)
 
     Logger.d(TAG, "shouldCompleteDownload() thread=$threadDescriptor, status=$mediaStatus, " +
-      "archived=${downloadResult.archived}, cyclesSinceProgress=${threadDownload.cyclesSinceProgress}")
+      "archived=$isArchived, cyclesSinceProgress=${threadDownload.cyclesSinceProgress}")
 
+    // From this point, we know the thread is archived/closed/deleted
     return when {
       // Case 1: All media downloaded successfully
       mediaStatus.allDownloaded -> {
@@ -139,8 +179,8 @@ class ThreadDownloadCompletionHelper(
         CompletionDecision.Complete("Thread has no media")
       }
 
-      // Case 3: Has retryable failures (429, network errors, etc.)
-      mediaStatus.hasRetryableFailures && downloadResult.archived -> {
+      // Case 3: Has retryable failures (archived threads only)
+      mediaStatus.hasRetryableFailures -> {
         val cyclesSinceProgress = threadDownload.cyclesSinceProgress
 
         if (cyclesSinceProgress >= ThreadDownloadConfig.MAX_ARCHIVED_THREAD_CYCLES) {
@@ -159,12 +199,7 @@ class ThreadDownloadCompletionHelper(
         }
       }
 
-      // Case 4: Has retryable failures but thread is still active
-      mediaStatus.hasRetryableFailures && !downloadResult.archived -> {
-        CompletionDecision.KeepRunning("Has ${mediaStatus.retryableCount} retryable media files")
-      }
-
-      // Case 5: Only permanent failures left (404, max retries)
+      // Case 4: Only permanent failures left (404, max retries)
       mediaStatus.onlyPermanentFailures -> {
         CompletionDecision.CompleteWithWarning(
           "Downloaded ${mediaStatus.successCount}/${mediaStatus.totalCount} media, " +
@@ -172,7 +207,7 @@ class ThreadDownloadCompletionHelper(
         )
       }
 
-      // Case 6: Mixed state or edge case
+      // Case 5: Mixed state or edge case
       else -> {
         CompletionDecision.KeepRunning(
           "Progress: ${mediaStatus.successCount}/${mediaStatus.totalCount}, " +

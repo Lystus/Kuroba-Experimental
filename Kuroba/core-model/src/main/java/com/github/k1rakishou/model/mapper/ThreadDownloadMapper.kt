@@ -20,7 +20,8 @@ object ThreadDownloadMapper {
       downloadResultMsg = threadDownload.downloadResultMsg,
       downloadCyclesCount = threadDownload.downloadCyclesCount,
       lastProgressTime = threadDownload.lastProgressTime,
-      cyclesSinceProgress = threadDownload.cyclesSinceProgress
+      cyclesSinceProgress = threadDownload.cyclesSinceProgress,
+      lastKnownSuccessCount = threadDownload.lastKnownSuccessCount
     )
   }
 
@@ -40,7 +41,8 @@ object ThreadDownloadMapper {
       downloadResultMsg = threadDownloadEntity.downloadResultMsg,
       downloadCyclesCount = threadDownloadEntity.downloadCyclesCount,
       lastProgressTime = threadDownloadEntity.lastProgressTime,
-      cyclesSinceProgress = threadDownloadEntity.cyclesSinceProgress
+      cyclesSinceProgress = threadDownloadEntity.cyclesSinceProgress,
+      lastKnownSuccessCount = threadDownloadEntity.lastKnownSuccessCount
     )
   }
 

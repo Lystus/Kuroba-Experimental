@@ -16,7 +16,8 @@ data class ThreadDownload(
   // Cycle tracking for archived threads (prevent infinite loops)
   var downloadCyclesCount: Int = 0,
   var lastProgressTime: Long? = null,
-  var cyclesSinceProgress: Int = 0
+  var cyclesSinceProgress: Int = 0,
+  var lastKnownSuccessCount: Int = 0  // Tracks highest successful media count ever seen (prevents false no-progress on file deletion)
 ) {
 
   enum class Status(val rawValue: Int) {
@@ -51,7 +52,8 @@ data class ThreadDownload(
       downloadResultMsg = null,
       downloadCyclesCount = 0,
       lastProgressTime = null,
-      cyclesSinceProgress = 0
+      cyclesSinceProgress = 0,
+      lastKnownSuccessCount = 0
     )
   }
 }
