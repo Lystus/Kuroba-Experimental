@@ -45,12 +45,15 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.TimeoutCancellationException
 import okhttp3.HttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.internal.closeQuietly
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.atomic.AtomicBoolean
+import java.io.File
+import com.github.k1rakishou.chan.utils.BackgroundUtils
 import kotlin.coroutines.coroutineContext
 import kotlin.time.ExperimentalTime
 import kotlin.time.measureTimedValue
@@ -284,16 +287,20 @@ class ThreadDownloadingDelegate(
     when (completionDecision) {
       is CompletionDecision.Complete -> {
         Logger.d(TAG, "processThread($index/$total) completing thread: ${completionDecision.reason}")
+        // Success completion - explicitly clear message (will show checkmark icon)
         threadDownloadManager.completeDownloading(
           threadDescriptor = threadDescriptor,
-          completionMessage = completionDecision.reason
+          completionMessage = null,
+          isSuccessCompletion = true
         )
       }
       is CompletionDecision.CompleteWithWarning -> {
         Logger.w(TAG, "processThread($index/$total) completing thread with warning: ${completionDecision.reason}")
+        // Warning completion - store message (will show exclamation icon)
         threadDownloadManager.completeDownloading(
           threadDescriptor = threadDescriptor,
-          completionMessage = completionDecision.reason
+          completionMessage = completionDecision.reason,
+          isSuccessCompletion = false
         )
       }
       is CompletionDecision.KeepRunning -> {
@@ -1160,8 +1167,153 @@ class ThreadDownloadingDelegate(
       // Removed premature validation that was marking active threads as complete
       // The normal download cycle now handles completion checking properly using
       // ThreadDownloadCompletionHelper which checks BOTH media status AND thread activity
+      
+      // One-time legacy data cleanup: clear success messages from old completed threads
+      // This runs synchronously to ensure cleanup completes before worker processes threads
+      runOneTimeCleanup()
     } catch (error: Throwable) {
       Logger.e(TAG, "cleanupIncompleteDownloads() error", error)
+    }
+  }
+  
+  /**
+   * One-time cleanup to remove success messages from downloadResultMsg.
+   * This fixes the UI issue where completed threads show exclamation icon
+   * because old success messages were stored in downloadResultMsg field.
+   * 
+   * Runs synchronously on worker startup to ensure cleanup happens before
+   * thread processing. Has timeout protection and retry limit.
+   */
+  private suspend fun runOneTimeCleanup() {
+    if (isCleanupDone()) {
+      Logger.d(TAG, "Success message cleanup already completed")
+      return
+    }
+    
+    val retryCount = getRetryCount()
+    if (retryCount >= 3) {
+      Logger.e(TAG, "Cleanup failed 3 times, giving up")
+      markCleanupDone() // Mark as done to prevent infinite retries
+      clearRetryCount()
+      return
+    }
+    
+    try {
+      withTimeout(5000) { // 5 second timeout
+        cleanupSuccessMessages()
+      }
+      markCleanupDone()
+      clearRetryCount()
+      Logger.d(TAG, "Success message cleanup completed successfully")
+    } catch (e: TimeoutCancellationException) {
+      incrementRetryCount()
+      Logger.e(TAG, "Cleanup timed out (attempt ${retryCount + 1}/3), will retry next launch", e)
+    } catch (e: Exception) {
+      incrementRetryCount()
+      Logger.e(TAG, "Cleanup failed (attempt ${retryCount + 1}/3), will retry next launch", e)
+    }
+  }
+  
+  /**
+   * Clears downloadResultMsg field for all threads that have success messages.
+   * This includes all statuses - Running, Stopped, and Completed threads.
+   */
+  private suspend fun cleanupSuccessMessages() {
+    BackgroundUtils.ensureBackgroundThread()
+    
+    val allThreadDownloads = threadDownloadManager.getAllThreadDownloads()
+    val threadsNeedingCleanup = allThreadDownloads.filter { threadDownload ->
+      threadDownload.downloadResultMsg != null &&
+      isSuccessMessage(threadDownload.downloadResultMsg!!)
+    }
+    
+    Logger.d(TAG, "Found ${threadsNeedingCleanup.size} threads with success messages needing cleanup")
+    
+    threadsNeedingCleanup.forEach { threadDownload ->
+      try {
+        threadDownloadManager.updateThreadDownload(threadDownload.threadDescriptor) { 
+          it.copy(downloadResultMsg = null)
+        }
+      } catch (e: Exception) {
+        Logger.e(TAG, "Failed to cleanup thread ${threadDownload.threadDescriptor}", e)
+        throw e // Re-throw to trigger retry
+      }
+    }
+    
+    Logger.d(TAG, "Successfully cleaned up ${threadsNeedingCleanup.size} threads")
+  }
+  
+  /**
+   * Check if a downloadResultMsg represents a success message (not a warning).
+   * Success messages should be cleared so the UI shows a checkmark instead of exclamation.
+   */
+  private fun isSuccessMessage(message: String): Boolean {
+    val lowerMsg = message.lowercase()
+    
+    // First check: if it contains warning keywords, it's NOT success
+    val warningKeywords = listOf(
+      "warning", "unavailable", "exceeded", "failed", 
+      "failing", "permanently", "error", "incomplete"
+    )
+    
+    if (warningKeywords.any { lowerMsg.contains(it) }) {
+      return false
+    }
+    
+    // Second check: does it match success patterns?
+    val successPatterns = listOf(
+      "all media downloaded",
+      "thread has no media", 
+      "media download disabled",
+      "download complete"
+    )
+    
+    return successPatterns.any { lowerMsg.contains(it) }
+  }
+  
+  private fun getCleanupFlagFile(): File {
+    return File(appConstants.threadDownloaderCacheDir, ".success_msg_cleanup_v1.done")
+  }
+  
+  private fun isCleanupDone(): Boolean {
+    return getCleanupFlagFile().exists()
+  }
+  
+  private fun markCleanupDone() {
+    try {
+      getCleanupFlagFile().createNewFile()
+    } catch (e: Exception) {
+      Logger.e(TAG, "Failed to create cleanup flag file", e)
+    }
+  }
+  
+  private fun getRetryCountFile(): File {
+    return File(appConstants.threadDownloaderCacheDir, ".success_msg_cleanup_retries")
+  }
+  
+  private fun getRetryCount(): Int {
+    return try {
+      val file = getRetryCountFile()
+      if (file.exists()) file.readText().toIntOrNull() ?: 0 else 0
+    } catch (e: Exception) {
+      0
+    }
+  }
+  
+  private fun incrementRetryCount() {
+    try {
+      val count = getRetryCount() + 1
+      getRetryCountFile().writeText(count.toString())
+    } catch (e: Exception) {
+      Logger.e(TAG, "Failed to increment retry count", e)
+    }
+  }
+  
+  private fun clearRetryCount() {
+    try {
+      getRetryCountFile().delete()
+    } catch (e: Exception) {
+      Logger.e(TAG, "Failed to clear retry count", e)
     }
   }
 

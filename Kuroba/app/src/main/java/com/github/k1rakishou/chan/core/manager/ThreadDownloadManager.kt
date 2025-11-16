@@ -236,7 +236,8 @@ class ThreadDownloadManager(
 
   suspend fun completeDownloading(
     threadDescriptor: ChanDescriptor.ThreadDescriptor,
-    completionMessage: String? = null
+    completionMessage: String? = null,
+    isSuccessCompletion: Boolean = false
   ) {
     ensureInitialized()
 
@@ -248,7 +249,11 @@ class ThreadDownloadManager(
 
       return@updateThreadDownload threadDownload.copy(
         status = ThreadDownload.Status.Completed,
-        downloadResultMsg = completionMessage ?: threadDownload.downloadResultMsg
+        downloadResultMsg = when {
+          isSuccessCompletion -> null  // Success: always clear message
+          completionMessage != null -> completionMessage  // Warning: store message
+          else -> threadDownload.downloadResultMsg  // Fallback: keep existing
+        }
       )
     })
 
