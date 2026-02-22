@@ -3,6 +3,7 @@ package com.github.k1rakishou.chan.core.manager
 import androidx.annotation.GuardedBy
 import com.github.k1rakishou.chan.core.helper.OneShotRunnable
 import com.github.k1rakishou.chan.core.helper.ThreadDownloaderFileManagerWrapper
+import com.github.k1rakishou.chan.features.thread_downloading.MediaDownloadRetryHelper
 import com.github.k1rakishou.chan.features.thread_downloading.ThreadDownloadingDelegate
 import com.github.k1rakishou.common.AppConstants
 import com.github.k1rakishou.common.ModularResult
@@ -36,7 +37,8 @@ class ThreadDownloadManager(
   private val appScope: CoroutineScope,
   private val _threadDownloaderFileManagerWrapper: Lazy<ThreadDownloaderFileManagerWrapper>,
   private val _threadDownloadRepository: Lazy<ThreadDownloadRepository>,
-  private val _chanPostRepository: Lazy<ChanPostRepository>
+  private val _chanPostRepository: Lazy<ChanPostRepository>,
+  private val _mediaDownloadRetryHelper: Lazy<MediaDownloadRetryHelper>
 ) {
   private val mutex = Mutex()
 
@@ -46,6 +48,8 @@ class ThreadDownloadManager(
     get() = _threadDownloadRepository.get()
   private val chanPostRepository: ChanPostRepository
     get() = _chanPostRepository.get()
+  private val mediaDownloadRetryHelper: MediaDownloadRetryHelper
+    get() = _mediaDownloadRetryHelper.get()
   private val fileManager: FileManager
     get() = threadDownloaderFileManagerWrapper.fileManager
 
@@ -262,6 +266,58 @@ class ThreadDownloadManager(
     }
 
     Logger.d(TAG, "completeDownloading() success=$updated, threadDescriptor=$threadDescriptor, message=$completionMessage")
+  }
+
+  suspend fun redownloadMedia(threadDescriptor: ChanDescriptor.ThreadDescriptor) {
+    ensureInitialized()
+
+    val updated = updateThreadDownload(threadDescriptor, updaterFunc = { threadDownload ->
+      if (threadDownload.status != ThreadDownload.Status.Completed) {
+        return@updateThreadDownload null
+      }
+
+      return@updateThreadDownload threadDownload.copy(
+        status = ThreadDownload.Status.Running,
+        downloadMedia = true,
+        downloadResultMsg = null,
+        downloadCyclesCount = 0,
+        cyclesSinceProgress = 0,
+        lastKnownSuccessCount = 0
+      )
+    })
+
+    if (!updated) {
+      Logger.d(TAG, "redownloadMedia() thread not found or not completed, threadDescriptor=$threadDescriptor")
+      return
+    }
+
+    // Delete all media files on disk (but keep thread posts in DB)
+    withContext(Dispatchers.IO) {
+      try {
+        val threadDownloaderCacheDir = fileManager.fromRawFile(appConstants.threadDownloaderCacheDir)
+        val threadDirName = ThreadDownloadingDelegate.formatDirectoryName(threadDescriptor)
+        val resultDirectory = threadDownloaderCacheDir.clone(DirectorySegment(threadDirName))
+
+        if (fileManager.exists(resultDirectory)) {
+          val files = fileManager.listFiles(resultDirectory)
+          files.forEach { file -> fileManager.delete(file) }
+          Logger.d(TAG, "redownloadMedia() deleted ${files.size} media files for $threadDescriptor")
+        }
+      } catch (error: Throwable) {
+        Logger.e(TAG, "redownloadMedia() error deleting media files", error)
+      }
+    }
+
+    // Clear all retry/failure records so permanently-failed files get a fresh chance
+    try {
+      mediaDownloadRetryHelper.cleanupThreadAttempts(threadDescriptor)
+      Logger.d(TAG, "redownloadMedia() cleared retry records for $threadDescriptor")
+    } catch (error: Throwable) {
+      Logger.e(TAG, "redownloadMedia() error clearing retry records", error)
+    }
+
+    _threadDownloadUpdateFlow.emit(Event.StartDownload(threadDescriptor))
+    Logger.d(TAG, "redownloadMedia() success, threadDescriptor=$threadDescriptor")
   }
 
   suspend fun onDownloadProcessed(

@@ -843,6 +843,26 @@ class LocalArchiveController(
       LocalArchiveViewModel.MenuItemType.Start -> {
         viewModel.startDownloads(selectedItems)
       }
+      LocalArchiveViewModel.MenuItemType.Redownload -> {
+        val title = if (selectedItems.size == 1) {
+          getString(R.string.controller_local_archive_redownload_one_thread, selectedItems.first().userReadableString())
+        } else {
+          getString(R.string.controller_local_archive_redownload_many_threads, selectedItems.size)
+        }
+
+        val descriptionText = getString(R.string.controller_local_archive_redownload_threads_description)
+
+        dialogFactory.createSimpleConfirmationDialog(
+          context,
+          titleText = title,
+          descriptionText = descriptionText,
+          negativeButtonText = getString(R.string.cancel),
+          positiveButtonText = getString(R.string.ok),
+          onPositiveButtonClickListener = {
+            viewModel.redownloadMedia(selectedItems)
+          }
+        )
+      }
       LocalArchiveViewModel.MenuItemType.Export -> {
         val items = listOf(
           FloatingListMenuItem(ACTION_EXPORT_THREADS, getString(R.string.controller_local_archive_export_threads)),

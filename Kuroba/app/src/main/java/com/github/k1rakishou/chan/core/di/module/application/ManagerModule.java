@@ -839,7 +839,8 @@ public class ManagerModule {
             CoroutineScope appScope,
             Lazy<ThreadDownloaderFileManagerWrapper> threadDownloaderFileManagerWrapper,
             Lazy<ThreadDownloadRepository> threadDownloadRepository,
-            Lazy<ChanPostRepository> chanPostRepository
+            Lazy<ChanPostRepository> chanPostRepository,
+            Lazy<MediaDownloadRetryHelper> mediaDownloadRetryHelper
     ) {
         Logger.deps("ThreadDownloadManager");
         return new ThreadDownloadManager(
@@ -847,7 +848,8 @@ public class ManagerModule {
                 appScope,
                 threadDownloaderFileManagerWrapper,
                 threadDownloadRepository,
-                chanPostRepository
+                chanPostRepository,
+                mediaDownloadRetryHelper
         );
     }
 

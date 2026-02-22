@@ -547,7 +547,7 @@ class ThreadDownloadingDelegate(
         // More intelligent size validation that considers server optimization
         if (isFileSizeReasonable(fileSize, isThumbnail, -1L)) { // Will use fallback validation
           // Enhanced corruption detection: verify file header/magic numbers
-          if (isValidImageFile(outputFile)) {
+          if (isValidMediaFile(outputFile)) {
             // File exists and appears valid, record success and skip download
             mediaDownloadRetryHelper.recordSuccess(imageUrl)
             return
@@ -807,7 +807,7 @@ class ThreadDownloadingDelegate(
    * Validates if a file is a valid image by checking file headers/magic numbers
    * This provides better corruption detection than just file size checks
    */
-  private suspend fun isValidImageFile(file: AbstractFile): Boolean {
+  private suspend fun isValidMediaFile(file: AbstractFile): Boolean {
     return try {
       val inputStream = fileManager.getInputStream(file)
       if (inputStream == null) {
@@ -854,15 +854,25 @@ class ThreadDownloadingDelegate(
           buffer[0] == 0x42.toByte() && buffer[1] == 0x4D.toByte() -> {
             return isValidBmpFile(file)
           }
-          
+
+          // WebM (Matroska): 1A 45 DF A3
+          buffer[0] == 0x1A.toByte() && buffer[1] == 0x45.toByte() && buffer[2] == 0xDF.toByte() && buffer[3] == 0xA3.toByte() -> {
+            return true // Valid WebM/Matroska header
+          }
+
+          // MP4 (ISO BMFF): bytes 4-7 = "ftyp"
+          bytesRead >= 8 && buffer[4] == 0x66.toByte() && buffer[5] == 0x74.toByte() && buffer[6] == 0x79.toByte() && buffer[7] == 0x70.toByte() -> {
+            return true // Valid MP4/ftyp header
+          }
+
           else -> {
-            Logger.w(TAG, "isValidImageFile() unknown image format for file: ${file.getFullPath()}")
+            Logger.w(TAG, "isValidMediaFile() unknown format for file: ${file.getFullPath()}")
             return true // Unknown format, assume valid to avoid false positives
           }
         }
       }
     } catch (error: Throwable) {
-      Logger.e(TAG, "isValidImageFile() error checking file: ${file.getFullPath()}", error)
+      Logger.e(TAG, "isValidMediaFile() error checking file: ${file.getFullPath()}", error)
       return true // On error, assume valid to avoid false positives
     }
   }
@@ -1149,7 +1159,7 @@ class ThreadDownloadingDelegate(
             reason = "extremely small file (${fileSize} bytes, likely corrupt)"
           } else if (fileSize >= absoluteMinSize) {
             // Additional validation: check if file is actually a valid image
-            if (!isValidImageFile(imageFile)) {
+            if (!isValidMediaFile(imageFile)) {
               shouldDelete = true
               reason = "invalid image format/corruption detected"
             }

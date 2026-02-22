@@ -235,6 +235,16 @@ class LocalArchiveViewModel : BaseViewModel() {
     }
   }
 
+  fun redownloadMedia(selectedItems: List<ChanDescriptor.ThreadDescriptor>) {
+    mainScope.launch {
+      selectedItems.forEach { threadDescriptor ->
+        threadDownloadManager.redownloadMedia(threadDescriptor)
+      }
+
+      refreshCacheAndReload()
+    }
+  }
+
   suspend fun hasNotCompletedDownloads(): Boolean {
     return threadDownloadManager.notCompletedThreadsCount() > 0
   }
@@ -335,6 +345,23 @@ class LocalArchiveViewModel : BaseViewModel() {
       )
     }
 
+    if (availableActions.canRedownload) {
+      itemsList += BottomMenuPanelItem(
+        menuItemId = ArchiveMenuItemId(MenuItemType.Redownload),
+        iconResId = R.drawable.ic_refresh_white_24dp,
+        textResId = R.string.bottom_menu_item_redownload,
+        onClickListener = {
+          val clickEvent = MenuItemClickEvent(
+            menuItemType = MenuItemType.Redownload,
+            items = viewModelSelectionHelper.getCurrentlySelectedItems()
+          )
+
+          viewModelSelectionHelper.emitBottomPanelMenuItemClickEvent(clickEvent)
+          viewModelSelectionHelper.unselectAll()
+        }
+      )
+    }
+
     itemsList += BottomMenuPanelItem(
       menuItemId = ArchiveMenuItemId(MenuItemType.Export),
       iconResId = R.drawable.ic_baseline_share_24,
@@ -358,6 +385,7 @@ class LocalArchiveViewModel : BaseViewModel() {
   ): AvailableActions {
     var canStop = false
     var canStart = false
+    var canRedownload = false
 
     loop@ for (currentlySelectedItem in currentlySelectedItems) {
       for (cachedThreadDownloadView in cachedThreadDownloadViews) {
@@ -370,18 +398,18 @@ class LocalArchiveViewModel : BaseViewModel() {
               canStart = true
             }
             ThreadDownload.Status.Completed -> {
-              // no-op
+              canRedownload = true
             }
           }
         }
 
-        if (canStart && canStop) {
+        if (canStart && canStop && canRedownload) {
           break@loop
         }
       }
     }
 
-    return AvailableActions(canStop = canStop, canStart = canStart)
+    return AvailableActions(canStop = canStop, canStart = canStart, canRedownload = canRedownload)
   }
 
   private suspend fun refreshCacheAndReload() {
@@ -600,7 +628,8 @@ class LocalArchiveViewModel : BaseViewModel() {
 
   class AvailableActions(
     var canStop: Boolean = false,
-    var canStart: Boolean = false
+    var canStart: Boolean = false,
+    var canRedownload: Boolean = false
   )
 
   data class ControllerTitleInfo(
@@ -617,7 +646,8 @@ class LocalArchiveViewModel : BaseViewModel() {
     Delete(0),
     Stop(1),
     Start(2),
-    Export(3)
+    Export(3),
+    Redownload(4)
   }
 
   data class ViewModelState(

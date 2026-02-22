@@ -381,7 +381,19 @@ open class ViewThreadController(
           presentController(threadDownloaderSettingsController, animated = true)
         }
         ThreadDownload.Status.Completed -> {
-          return@launch
+          dialogFactory.createSimpleConfirmationDialog(
+            context = context,
+            titleText = getString(R.string.controller_local_archive_redownload_one_thread, threadDescriptor.userReadableString()),
+            descriptionText = getString(R.string.controller_local_archive_redownload_threads_description),
+            negativeButtonText = getString(R.string.cancel),
+            positiveButtonText = getString(R.string.ok),
+            onPositiveButtonClickListener = {
+              mainScope.launch {
+                threadDownloadManager.redownloadMedia(threadDescriptor)
+                updateThreadDownloadItem()
+              }
+            }
+          )
         }
       }
 
@@ -742,7 +754,7 @@ open class ViewThreadController(
   private suspend fun updateThreadDownloadItem() {
     navigation.findSubItem(ACTION_DOWNLOAD_THREAD)?.let { downloadThreadItem ->
       val status = threadDownloadManager.getStatus(threadDescriptor)
-      downloadThreadItem.visible = status != ThreadDownload.Status.Completed
+      downloadThreadItem.visible = true
 
       when (status) {
         null,
@@ -753,7 +765,7 @@ open class ViewThreadController(
           downloadThreadItem.text = getString(R.string.action_stop_thread_download)
         }
         ThreadDownload.Status.Completed -> {
-          downloadThreadItem.visible = false
+          downloadThreadItem.text = getString(R.string.action_redownload_thread_media)
         }
       }
     }

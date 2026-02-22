@@ -92,6 +92,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     <string name="bottom_menu_item_delete">Delete</string>
     <string name="bottom_menu_item_stop">Stop</string>
     <string name="bottom_menu_item_start">Start</string>
+    <string name="bottom_menu_item_redownload">Re-download</string>
     <string name="bottom_menu_item_export">Export</string>
 
     <string name="permission_app_settings">App settings</string>
@@ -172,6 +173,7 @@ Re-enable this permission in the app settings if you permanently disabled it."</
 
     <string name="action_start_thread_download">Start thread download</string>
     <string name="action_stop_thread_download">Stop thread download</string>
+    <string name="action_redownload_thread_media">Re-download thread media</string>
 
     <string name="action_copy_link_text">Copy link text</string>
     <string name="action_copy_link_value">Copy link value</string>
@@ -1369,6 +1371,9 @@ If you ever log out or if the passcode expires you will have to change reply mod
     <string name="controller_local_archive_delete_threads_description">This action will delete thread(s) with all downloaded posts and files. Are you sure you want to do that?</string>
     <string name="controller_local_archive_delete_one_thread">Delete %1$s archived thread?</string>
     <string name="controller_local_archive_delete_many_threads">Delete %1$d archived threads?</string>
+    <string name="controller_local_archive_redownload_threads_description">This will delete all downloaded media files and re-download them. Thread posts will be kept. Retry records will be reset so previously failed files will be retried.</string>
+    <string name="controller_local_archive_redownload_one_thread">Re-download media for %1$s?</string>
+    <string name="controller_local_archive_redownload_many_threads">Re-download media for %1$d threads?</string>
     <string name="controller_local_archive_show_all_threads">ALL</string>
     <string name="controller_local_archive_show_downloading_threads">DOWNLOADING</string>
     <string name="controller_local_archive_show_downloaded_threads">DOWNLOADED</string>
