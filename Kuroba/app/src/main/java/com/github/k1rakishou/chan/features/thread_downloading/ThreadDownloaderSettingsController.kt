@@ -193,6 +193,54 @@ class ThreadDownloaderSettingsController(
           color = LocalChanTheme.current.textColorSecondaryCompose
         )
       }
+
+      Spacer(modifier = Modifier.height(16.dp))
+
+      var concurrentDownloads by remember { mutableStateOf(ChanSettings.threadDownloaderConcurrentDownloads.get()) }
+
+      Column(
+        modifier = Modifier
+          .fillMaxWidth()
+          .wrapContentHeight()
+      ) {
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.SpaceBetween,
+          verticalAlignment = Alignment.CenterVertically
+        ) {
+          KurobaComposeText(
+            text = stringResource(id = R.string.thread_downloader_settings_controller_concurrent_downloads),
+            fontSize = 14.sp
+          )
+          KurobaComposeText(
+            text = "$concurrentDownloads",
+            fontSize = 14.sp,
+            color = LocalChanTheme.current.accentColorCompose
+          )
+        }
+
+        Slider(
+          value = concurrentDownloads.toFloat(),
+          onValueChange = { newValue ->
+            concurrentDownloads = newValue.toInt().coerceIn(1, 8)
+            ChanSettings.threadDownloaderConcurrentDownloads.set(concurrentDownloads)
+          },
+          valueRange = 1f..8f,
+          steps = 6, // 1,2,3,4,5,6,7,8
+          colors = SliderDefaults.colors(
+            thumbColor = LocalChanTheme.current.accentColorCompose,
+            activeTrackColor = LocalChanTheme.current.accentColorCompose,
+            inactiveTrackColor = LocalChanTheme.current.accentColorCompose.copy(alpha = 0.3f)
+          ),
+          modifier = Modifier.fillMaxWidth()
+        )
+
+        KurobaComposeText(
+          text = stringResource(id = R.string.thread_downloader_settings_controller_concurrent_downloads_hint),
+          fontSize = 12.sp,
+          color = LocalChanTheme.current.textColorSecondaryCompose
+        )
+      }
     }
   }
 

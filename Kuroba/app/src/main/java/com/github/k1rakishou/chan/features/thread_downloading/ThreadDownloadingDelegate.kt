@@ -80,7 +80,8 @@ class ThreadDownloadingDelegate(
     get() = threadDownloaderFileManagerWrapper.fileManager
   private val okHttpClient: OkHttpClient
     get() = downloaderOkHttpClient.get().okHttpClient()
-  private val batchCount = appConstants.processorsCount
+  private val batchCount: Int
+    get() = ChanSettings.threadDownloaderConcurrentDownloads.get()
 
   private val _running = AtomicBoolean(false)
   val running: Boolean
@@ -229,6 +230,7 @@ class ThreadDownloadingDelegate(
       AppModuleAndroidUtils.isConnectionUnmetered()
     }
 
+    val cdnThrottled = AtomicBoolean(false)
     val canProcessThreadMedia = threadDownload.downloadMedia
       && !outOfDiskSpaceError.get()
       && isNetworkGoodForMediaDownload
@@ -249,7 +251,8 @@ class ThreadDownloadingDelegate(
         threadDescriptor = threadDescriptor,
         isArchivedThread = isArchivedThread,
         outOfDiskSpaceError = outOfDiskSpaceError,
-        outputDirError = outputDirError
+        outputDirError = outputDirError,
+        cdnThrottled = cdnThrottled
       )
     } else {
       Logger.d(TAG, "processThread($index/$total) " +
@@ -375,6 +378,7 @@ class ThreadDownloadingDelegate(
     isArchivedThread: Boolean,
     outOfDiskSpaceError: AtomicBoolean,
     outputDirError: AtomicBoolean,
+    cdnThrottled: AtomicBoolean,
   ) {
     if (chanPostImages.isEmpty()) {
       Logger.d(TAG, "processThreadMedia($index/$total) threadDescriptor=${threadDescriptor}, " +
@@ -427,9 +431,12 @@ class ThreadDownloadingDelegate(
     val mutex = Mutex()
     var totalProgress = POSTS_PROCESSED_PROGRESS
 
+    // If a CDN 429 was hit previously, drop to sequential so the per-file delay works
+    val effectiveBatchCount = if (cdnThrottled.get()) 1 else batchCount
+
     processDataCollectionConcurrently(
       dataList = chanPostImages,
-      batchCount = batchCount,
+      batchCount = effectiveBatchCount,
       dispatcher = Dispatchers.IO
     ) { postImage ->
       val isNetworkGoodForMediaDownload = if (ChanSettings.threadDownloaderDownloadMediaOnMeteredNetwork.get()) {
@@ -450,6 +457,11 @@ class ThreadDownloadingDelegate(
         return@processDataCollectionConcurrently
       }
 
+      // If a concurrent worker just got CDN 429'd, skip remaining images in this batch
+      if (cdnThrottled.get()) {
+        return@processDataCollectionConcurrently
+      }
+
       val thumbnailUrl = postImage.actualThumbnailUrl
       val thumbnailName = postImage.actualThumbnailUrl?.extractFileName()
 
@@ -463,7 +475,8 @@ class ThreadDownloadingDelegate(
           imageUrl = thumbnailUrl,
           isArchivedThread = isArchivedThread,
           outOfDiskSpaceError = outOfDiskSpaceError,
-          outputDirError = outputDirError
+          outputDirError = outputDirError,
+          cdnThrottled = cdnThrottled
         )
       }
 
@@ -475,6 +488,11 @@ class ThreadDownloadingDelegate(
         threadDescriptor,
         ThreadDownloadProgressNotifier.Event.Progress(newProgress1)
       )
+
+      // Re-check after thumbnail — if it got 429'd, skip the full image download
+      if (cdnThrottled.get()) {
+        return@processDataCollectionConcurrently
+      }
 
       val fullImageUrl = postImage.imageUrl
       val fullImageName = postImage.imageUrl?.extractFileName()
@@ -489,7 +507,8 @@ class ThreadDownloadingDelegate(
           imageUrl = fullImageUrl,
           isArchivedThread = isArchivedThread,
           outOfDiskSpaceError = outOfDiskSpaceError,
-          outputDirError = outputDirError
+          outputDirError = outputDirError,
+          cdnThrottled = cdnThrottled
         )
       }
 
@@ -516,6 +535,7 @@ class ThreadDownloadingDelegate(
     isArchivedThread: Boolean,
     outOfDiskSpaceError: AtomicBoolean,
     outputDirError: AtomicBoolean,
+    cdnThrottled: AtomicBoolean,
   ) {
     // Check retry helper before attempting download
     
@@ -608,27 +628,15 @@ class ThreadDownloadingDelegate(
         isArchivedThread = isArchivedThread
       )
       
-      // Check for rate limiting (HTTP 429)
+      // Check for rate limiting (HTTP 429) from CDN
       if (response.code == 429) {
-        val retryAfterSeconds = response.header("Retry-After")?.toLongOrNull()?.toInt() ?: 60
+        Logger.w(TAG, "downloadImage() CDN rate limited (429) for ${threadDescriptor.siteDescriptor().siteName}, " +
+          "switching to sequential downloads")
         
-        val siteDescriptor = threadDescriptor.siteDescriptor()
-        Logger.w(TAG, "downloadImage() rate limited (429) for site=${siteDescriptor.siteName}, " +
-          "Retry-After: ${retryAfterSeconds}s")
+        // Signal throttle — remaining workers in this batch will skip,
+        // and the next batch will run sequentially with per-file delay
+        cdnThrottled.set(true)
         
-        rateLimitManager.setCooldown(siteDescriptor, retryAfterSeconds)
-        
-        // Notify user about rate limit with formatted time
-        val siteName = siteDescriptor.siteName
-        val timeFormatted = formatDuration(retryAfterSeconds.toLong())
-        val message = AppModuleAndroidUtils.getString(
-          R.string.thread_downloader_rate_limited, 
-          siteName,
-          timeFormatted
-        )
-        AppModuleAndroidUtils.showToast(AndroidUtils.getAppContext(), message, Toast.LENGTH_LONG)
-        
-        // Clean up and return - the cooldown will prevent further downloads until it expires
         fileManager.delete(tempFile)
         return
       }

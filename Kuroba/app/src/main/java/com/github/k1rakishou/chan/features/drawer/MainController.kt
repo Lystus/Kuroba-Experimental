@@ -450,6 +450,11 @@ class MainController(
         .collect { event -> onNewThreadDownloadEvent(event) }
     }
 
+    mainScope.launch {
+      threadDownloadManager.awaitInitialization()
+      onNewThreadDownloadEvent(ThreadDownloadManager.Event.Initialized)
+    }
+
     globalWindowInsetsManager.addInsetsUpdatesListener(this)
 
     themeEngine.addListener(this)

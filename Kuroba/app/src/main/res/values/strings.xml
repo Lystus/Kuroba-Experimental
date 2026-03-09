@@ -1420,6 +1420,8 @@ If you ever log out or if the passcode expires you will have to change reply mod
     <string name="thread_downloader_settings_controller_location_info">Thread media is stored on the internal storage.\n\nDirectory: %1$s</string>
     <string name="thread_downloader_settings_controller_media_delay">Media download delay (ms)</string>
     <string name="thread_downloader_settings_controller_media_delay_hint">Delay between each media file download to help avoid rate limits. Applies to both thread downloading and media prefetching. Default: 1000ms (1 second)</string>
+    <string name="thread_downloader_settings_controller_concurrent_downloads">Concurrent downloads</string>
+    <string name="thread_downloader_settings_controller_concurrent_downloads_hint">Number of media files to download simultaneously. Lower values reduce the chance of being rate limited. Default: 2</string>
     <string name="thread_downloader_rate_limited">%1$s rate limited by server. Pausing for %2$s</string>
     <string name="thread_downloader_rate_limited_refresh">%1$s is rate limited. Downloads available in %2$s</string>
     <string name="thread_downloader_rate_limit_expired">Rate limit expired. Resuming downloads…</string>
