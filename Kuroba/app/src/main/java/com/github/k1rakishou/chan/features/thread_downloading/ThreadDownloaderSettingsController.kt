@@ -22,6 +22,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import kotlin.math.roundToInt
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.stringResource
@@ -222,7 +223,9 @@ class ThreadDownloaderSettingsController(
         Slider(
           value = concurrentDownloads.toFloat(),
           onValueChange = { newValue ->
-            concurrentDownloads = newValue.toInt().coerceIn(1, 8)
+            concurrentDownloads = newValue.roundToInt().coerceIn(1, 8)
+          },
+          onValueChangeFinished = {
             ChanSettings.threadDownloaderConcurrentDownloads.set(concurrentDownloads)
           },
           valueRange = 1f..8f,
