@@ -6,6 +6,7 @@ import com.github.k1rakishou.ChanSettings;
 import com.github.k1rakishou.chan.Chan;
 import com.github.k1rakishou.chan.core.helper.ProxyStorage;
 import com.github.k1rakishou.chan.core.manager.FirewallBypassManager;
+import com.github.k1rakishou.chan.core.manager.RateLimitManager;
 import com.github.k1rakishou.chan.core.net.KurobaProxySelector;
 import com.github.k1rakishou.chan.core.site.SiteResolver;
 import com.github.k1rakishou.common.dns.CompositeDnsSelector;
@@ -27,6 +28,7 @@ public class RealDownloaderOkHttpClient implements DownloaderOkHttpClient {
     private final ProxyStorage proxyStorage;
     private final SiteResolver siteResolver;
     private final FirewallBypassManager firewallBypassManager;
+    private final RateLimitManager rateLimitManager;
 
     private OkHttpClient downloaderClient;
 
@@ -38,7 +40,8 @@ public class RealDownloaderOkHttpClient implements DownloaderOkHttpClient {
             ProxyStorage proxyStorage,
             HttpLoggingInterceptorLazy httpLoggingInterceptorLazy,
             SiteResolver siteResolver,
-            FirewallBypassManager firewallBypassManager
+            FirewallBypassManager firewallBypassManager,
+            RateLimitManager rateLimitManager
     ) {
         this.normalDnsSelectorFactory = normalDnsSelectorFactory;
         this.dnsOverHttpsSelectorFactory = dnsOverHttpsSelectorFactory;
@@ -47,6 +50,7 @@ public class RealDownloaderOkHttpClient implements DownloaderOkHttpClient {
         this.httpLoggingInterceptorLazy = httpLoggingInterceptorLazy;
         this.siteResolver = siteResolver;
         this.firewallBypassManager = firewallBypassManager;
+        this.rateLimitManager = rateLimitManager;
     }
 
     @NotNull
@@ -87,6 +91,7 @@ public class RealDownloaderOkHttpClient implements DownloaderOkHttpClient {
                     downloaderClient = okHttpClient.newBuilder()
                             .dns(compositeDnsSelector)
                             .addNetworkInterceptor(new GzipInterceptor())
+                            .addNetworkInterceptor(new CdnRateLimitInterceptor(siteResolver, rateLimitManager))
                             .build();
                 }
             }

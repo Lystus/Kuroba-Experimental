@@ -6,6 +6,7 @@ import com.github.k1rakishou.ChanSettings;
 import com.github.k1rakishou.chan.Chan;
 import com.github.k1rakishou.chan.core.helper.ProxyStorage;
 import com.github.k1rakishou.chan.core.manager.FirewallBypassManager;
+import com.github.k1rakishou.chan.core.manager.RateLimitManager;
 import com.github.k1rakishou.chan.core.net.KurobaProxySelector;
 import com.github.k1rakishou.chan.core.site.SiteResolver;
 import com.github.k1rakishou.common.dns.CompositeDnsSelector;
@@ -29,6 +30,7 @@ public class CoilOkHttpClient implements CustomOkHttpClient {
     private final ProxyStorage proxyStorage;
     private final SiteResolver siteResolver;
     private final FirewallBypassManager firewallBypassManager;
+    private final RateLimitManager rateLimitManager;
 
     private OkHttpClient coilClient;
 
@@ -41,7 +43,8 @@ public class CoilOkHttpClient implements CustomOkHttpClient {
             ProxyStorage proxyStorage,
             HttpLoggingInterceptorLazy httpLoggingInterceptorLazy,
             SiteResolver siteResolver,
-            FirewallBypassManager firewallBypassManager
+            FirewallBypassManager firewallBypassManager,
+            RateLimitManager rateLimitManager
     ) {
         this.applicationContext = applicationContext;
         this.normalDnsSelectorFactory = normalDnsSelectorFactory;
@@ -51,6 +54,7 @@ public class CoilOkHttpClient implements CustomOkHttpClient {
         this.httpLoggingInterceptorLazy = httpLoggingInterceptorLazy;
         this.siteResolver = siteResolver;
         this.firewallBypassManager = firewallBypassManager;
+        this.rateLimitManager = rateLimitManager;
     }
 
     @NotNull
@@ -89,6 +93,7 @@ public class CoilOkHttpClient implements CustomOkHttpClient {
                     coilClient = okHttpClient.newBuilder()
                             .dns(compositeDnsSelector)
                             .addNetworkInterceptor(new GzipInterceptor())
+                            .addNetworkInterceptor(new CdnRateLimitInterceptor(siteResolver, rateLimitManager))
                             .build();
                 }
             }

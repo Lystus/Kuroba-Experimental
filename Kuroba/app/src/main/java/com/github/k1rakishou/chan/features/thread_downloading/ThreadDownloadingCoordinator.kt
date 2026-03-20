@@ -167,8 +167,12 @@ class ThreadDownloadingCoordinator(
           Logger.d(TAG, "Work already running, keeping it")
           ExistingWorkPolicy.KEEP
         }
+        existingWork?.state == WorkInfo.State.ENQUEUED -> {
+          Logger.d(TAG, "Work is enqueued (waiting for delay), keeping it")
+          ExistingWorkPolicy.KEEP
+        }
         else -> {
-          Logger.d(TAG, "No running work, replacing any enqueued work")
+          Logger.d(TAG, "No running work, replacing")
           ExistingWorkPolicy.REPLACE
         }
       }

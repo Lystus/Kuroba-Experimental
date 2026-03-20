@@ -30,6 +30,7 @@ import com.github.k1rakishou.chan.core.cache.CacheHandler;
 import com.github.k1rakishou.chan.core.cache.FileCacheV2;
 import com.github.k1rakishou.chan.core.helper.ProxyStorage;
 import com.github.k1rakishou.chan.core.manager.FirewallBypassManager;
+import com.github.k1rakishou.chan.core.manager.RateLimitManager;
 import com.github.k1rakishou.chan.core.site.SiteResolver;
 import com.github.k1rakishou.chan.core.site.http.HttpCallManager;
 import com.github.k1rakishou.common.AppConstants;
@@ -159,7 +160,8 @@ public class NetModule {
             ProxyStorage proxyStorage,
             HttpLoggingInterceptorLazy httpLoggingInterceptorLazy,
             SiteResolver siteResolver,
-            FirewallBypassManager firewallBypassManager
+            FirewallBypassManager firewallBypassManager,
+            RateLimitManager rateLimitManager
     ) {
         Logger.deps("CoilOkHttpClient");
 
@@ -171,7 +173,8 @@ public class NetModule {
                 proxyStorage,
                 httpLoggingInterceptorLazy,
                 siteResolver,
-                firewallBypassManager
+                firewallBypassManager,
+                rateLimitManager
         );
     }
 
@@ -187,7 +190,8 @@ public class NetModule {
             ProxyStorage proxyStorage,
             HttpLoggingInterceptorLazy httpLoggingInterceptorLazy,
             SiteResolver siteResolver,
-            FirewallBypassManager firewallBypassManager
+            FirewallBypassManager firewallBypassManager,
+            RateLimitManager rateLimitManager
     ) {
         Logger.deps("RealDownloaderOkHttpClient");
 
@@ -198,7 +202,8 @@ public class NetModule {
                 proxyStorage,
                 httpLoggingInterceptorLazy,
                 siteResolver,
-                firewallBypassManager
+                firewallBypassManager,
+                rateLimitManager
         );
     }
 }

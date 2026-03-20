@@ -10,6 +10,7 @@ import com.github.k1rakishou.model.data.descriptor.ChanDescriptor
 import com.github.k1rakishou.model.data.post.ChanPostImage
 import com.github.k1rakishou.model.data.thread.ThreadDownload
 import com.github.k1rakishou.model.repository.ChanPostImageRepository
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -26,7 +27,7 @@ class ThreadDownloadCompletionHelper(
 ) {
 
   // Cache for media status analysis (threadDescriptor -> (timestamp, status))
-  private val mediaStatusCache = mutableMapOf<ChanDescriptor.ThreadDescriptor, Pair<Long, MediaDownloadStatus>>()
+  private val mediaStatusCache = ConcurrentHashMap<ChanDescriptor.ThreadDescriptor, Pair<Long, MediaDownloadStatus>>()
   private val CACHE_TTL_MS = 30_000L // 30 seconds
   
   /**

@@ -210,7 +210,11 @@ class ThreadDownloadManager(
         return@updateThreadDownload null
       }
 
-      return@updateThreadDownload threadDownload.copy(status = ThreadDownload.Status.Running)
+      return@updateThreadDownload threadDownload.copy(
+        status = ThreadDownload.Status.Running,
+        cyclesSinceProgress = 0,
+        downloadCyclesCount = 0
+      )
     })
 
     if (updated) {

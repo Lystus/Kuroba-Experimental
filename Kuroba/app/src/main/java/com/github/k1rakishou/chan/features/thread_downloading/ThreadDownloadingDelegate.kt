@@ -28,6 +28,7 @@ import com.github.k1rakishou.fsaf.file.AbstractFile
 import com.github.k1rakishou.fsaf.file.DirectorySegment
 import com.github.k1rakishou.fsaf.file.FileSegment
 import com.github.k1rakishou.model.data.descriptor.ChanDescriptor
+import com.github.k1rakishou.model.data.descriptor.SiteDescriptor
 import com.github.k1rakishou.model.data.post.ChanPostImage
 import com.github.k1rakishou.model.data.post.ChanPostImageType
 import com.github.k1rakishou.model.data.thread.ThreadDownload
@@ -45,15 +46,15 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
-import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.HttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.internal.closeQuietly
 import java.nio.charset.StandardCharsets
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import java.io.File
-import com.github.k1rakishou.chan.utils.BackgroundUtils
 import kotlin.coroutines.coroutineContext
 import kotlin.time.ExperimentalTime
 import kotlin.time.measureTimedValue
@@ -86,6 +87,9 @@ class ThreadDownloadingDelegate(
   private val _running = AtomicBoolean(false)
   val running: Boolean
     get() = _running.get()
+
+  // Track CDN throttle state per site (survives across threads within a cycle, expires after timeout)
+  private val cdnThrottledSites = ConcurrentHashMap<SiteDescriptor, Long>()
 
   @OptIn(ExperimentalTime::class)
   suspend fun doWork(): ModularResult<Unit> {
@@ -146,13 +150,20 @@ class ThreadDownloadingDelegate(
           ThreadDownloadProgressNotifier.Event.Progress(0.1f)
         )
 
-        processThread(
-          threadDownload = threadDownload,
-          index = index + 1,
-          total = threadDownloads.size,
-          outOfDiskSpaceError = outOfDiskSpaceError,
-          outputDirError = outputDirError
-        )
+        val completed = withTimeoutOrNull(THREAD_PROCESSING_TIMEOUT_MS) {
+          processThread(
+            threadDownload = threadDownload,
+            index = index + 1,
+            total = threadDownloads.size,
+            outOfDiskSpaceError = outOfDiskSpaceError,
+            outputDirError = outputDirError
+          )
+          true
+        }
+
+        if (completed == null) {
+          Logger.e(TAG, "doWorkInternal() thread processing timed out for ${threadDownload.threadDescriptor}")
+        }
 
         threadDownloadProgressNotifier.notifyProgressEvent(
           threadDownload.threadDescriptor,
@@ -222,6 +233,16 @@ class ThreadDownloadingDelegate(
       executionResult.value
     }
 
+    // Fix #1: Check if API rate limited - skip media download if so
+    if (downloadResult.rateLimited) {
+      Logger.w(TAG, "processThread($index/$total) API rate limited for $threadDescriptor, skipping media")
+      threadDownloadManager.onDownloadProcessed(
+        threadDescriptor = threadDescriptor,
+        resultMessage = "Rate limited - waiting for cooldown"
+      )
+      return
+    }
+
     val ownerThreadDatabaseId = threadDownload.ownerThreadDatabaseId
 
     val isNetworkGoodForMediaDownload = if (ChanSettings.threadDownloaderDownloadMediaOnMeteredNetwork.get()) {
@@ -230,7 +251,14 @@ class ThreadDownloadingDelegate(
       AppModuleAndroidUtils.isConnectionUnmetered()
     }
 
-    val cdnThrottled = AtomicBoolean(false)
+    // Fix #2: CDN throttle persists across threads within a cycle via site-aware map
+    val siteDesc = threadDescriptor.siteDescriptor()
+    val cdnThrottleExpiry = cdnThrottledSites[siteDesc]
+    val isCdnThrottled = cdnThrottleExpiry != null && System.currentTimeMillis() - cdnThrottleExpiry < CDN_THROTTLE_DURATION_MS
+    val cdnThrottled = AtomicBoolean(isCdnThrottled)
+    if (isCdnThrottled) {
+      Logger.w(TAG, "processThread($index/$total) CDN throttle still active for ${siteDesc.siteName}")
+    }
     val canProcessThreadMedia = threadDownload.downloadMedia
       && !outOfDiskSpaceError.get()
       && isNetworkGoodForMediaDownload
@@ -254,6 +282,9 @@ class ThreadDownloadingDelegate(
         outputDirError = outputDirError,
         cdnThrottled = cdnThrottled
       )
+
+      // Invalidate completion helper cache so shouldCompleteDownload() sees fresh data
+      threadDownloadCompletionHelper.invalidateCache(threadDescriptor)
     } else {
       Logger.d(TAG, "processThread($index/$total) " +
         "isNetworkGoodForMediaDownload=$isNetworkGoodForMediaDownload, " +
@@ -439,16 +470,7 @@ class ThreadDownloadingDelegate(
       batchCount = effectiveBatchCount,
       dispatcher = Dispatchers.IO
     ) { postImage ->
-      val isNetworkGoodForMediaDownload = if (ChanSettings.threadDownloaderDownloadMediaOnMeteredNetwork.get()) {
-        true
-      } else {
-        AppModuleAndroidUtils.isConnectionUnmetered()
-      }
-
-      if (!isNetworkGoodForMediaDownload) {
-        return@processDataCollectionConcurrently
-      }
-
+      try {
       if (outOfDiskSpaceError.get()) {
         return@processDataCollectionConcurrently
       }
@@ -520,6 +542,11 @@ class ThreadDownloadingDelegate(
         threadDescriptor,
         ThreadDownloadProgressNotifier.Event.Progress(newProgress2)
       )
+      } catch (e: CancellationException) {
+        throw e
+      } catch (e: Exception) {
+        Logger.e(TAG, "processThreadMedia() error processing image ${postImage.imageUrl}: ${e.errorMessageOrClassName()}")
+      }
     }
 
     Logger.d(TAG, "processThreadMedia($index/$total) chanThread=${threadDescriptor} success")
@@ -560,25 +587,17 @@ class ThreadDownloadingDelegate(
       return
     }
 
-    // Enhanced file verification - check both existence and reasonable file size
+    // Check if file already exists and is valid (magic number check only - no size tolerance)
     if (fileManager.exists(outputFile)) {
       val fileSize = fileManager.getLength(outputFile)
       if (fileSize > 0L) {
-        // More intelligent size validation that considers server optimization
-        if (isFileSizeReasonable(fileSize, isThumbnail, -1L)) { // Will use fallback validation
-          // Enhanced corruption detection: verify file header/magic numbers
-          if (isValidMediaFile(outputFile)) {
-            // File exists and appears valid, record success and skip download
-            mediaDownloadRetryHelper.recordSuccess(imageUrl)
-            return
-          } else {
-            // File exists but appears corrupt based on header verification
-            Logger.w(TAG, "downloadImage() found corrupt file (invalid header), re-downloading: $name")
-            fileManager.delete(outputFile)
-          }
+        if (isValidMediaFile(outputFile)) {
+          // File exists and appears valid, record success and skip download
+          mediaDownloadRetryHelper.recordSuccess(imageUrl)
+          return
         } else {
-          // File exists but size is suspicious
-          Logger.w(TAG, "downloadImage() found suspicious file size (${fileSize} bytes), re-downloading: $name")
+          // File exists but appears corrupt based on header verification
+          Logger.w(TAG, "downloadImage() found corrupt file (invalid header), re-downloading: $name")
           fileManager.delete(outputFile)
         }
       }
@@ -617,7 +636,22 @@ class ThreadDownloadingDelegate(
       }
     }
 
-    val response = okHttpClient.suspendCall(requestBuilder.build())
+    val response = withTimeoutOrNull(IMAGE_DOWNLOAD_TIMEOUT_MS) {
+      okHttpClient.suspendCall(requestBuilder.build())
+    }
+    if (response == null) {
+      Logger.w(TAG, "downloadImage() timed out downloading $name from $imageUrl")
+      mediaDownloadRetryHelper.recordFailure(
+        url = imageUrl,
+        threadDescriptor = threadDescriptor,
+        httpCode = null,
+        error = null,
+        isArchivedThread = isArchivedThread
+      )
+      fileManager.delete(tempFile)
+      return
+    }
+
     if (!response.isSuccessful) {
       // Record failure with retry helper
       mediaDownloadRetryHelper.recordFailure(
@@ -636,6 +670,7 @@ class ThreadDownloadingDelegate(
         // Signal throttle — remaining workers in this batch will skip,
         // and the next batch will run sequentially with per-file delay
         cdnThrottled.set(true)
+        cdnThrottledSites[threadDescriptor.siteDescriptor()] = System.currentTimeMillis()
         
         fileManager.delete(tempFile)
         return
@@ -686,16 +721,14 @@ class ThreadDownloadingDelegate(
       // Verify download completed successfully
       val finalFileSize = fileManager.getLength(tempFile)
       if (finalFileSize > 0L && totalBytesWritten == finalFileSize) {
-        // Additional validation: check if downloaded size is reasonable
-        if (isFileSizeReasonable(finalFileSize, isThumbnail, expectedContentLength)) {
-          // Atomic rename: move temp file to final location
-          if (fileManager.exists(outputFile)) {
-            fileManager.delete(outputFile)
-          }
-          
-          // Create final file and copy contents
-          val finalFile = fileManager.create(outputDirectory, listOf(FileSegment(name)))
-          if (finalFile != null && fileManager.copyFileContents(tempFile, finalFile)) {
+        // Atomic rename: move temp file to final location
+        if (fileManager.exists(outputFile)) {
+          fileManager.delete(outputFile)
+        }
+        
+        // Create final file and copy contents
+        val finalFile = fileManager.create(outputDirectory, listOf(FileSegment(name)))
+        if (finalFile != null && fileManager.copyFileContents(tempFile, finalFile)) {
             downloadSuccess = true
             Logger.d(TAG, "downloadImage() successfully downloaded $name (${finalFileSize} bytes, expected: ${expectedContentLength})")
             
@@ -733,9 +766,6 @@ class ThreadDownloadingDelegate(
           } else {
             Logger.e(TAG, "downloadImage() failed to create final file or copy contents for $name")
           }
-        } else {
-          Logger.w(TAG, "downloadImage() downloaded file size seems unreasonable for $name: ${finalFileSize} bytes (expected: ${expectedContentLength})")
-        }
       } else {
         Logger.e(TAG, "downloadImage() size mismatch for $name: written=$totalBytesWritten, final=$finalFileSize")
       }
@@ -764,51 +794,6 @@ class ThreadDownloadingDelegate(
         fileManager.delete(outputFile)
       }
     }
-  }
-
-  /**
-   * Validates if a file size is reasonable considering server-side optimizations
-   * This accounts for compression, format conversion, and CDN optimization
-   */
-  private fun isFileSizeReasonable(
-    actualSize: Long,
-    isThumbnail: Boolean,
-    expectedContentLength: Long
-  ): Boolean {
-    // Absolute minimum sizes for valid images (very conservative)
-    val absoluteMinSize = if (isThumbnail) 50L else 200L
-    
-    // If file is smaller than absolute minimum, it's definitely corrupt
-    if (actualSize < absoluteMinSize) {
-      return false
-    }
-    
-    // If server didn't provide content-length, use more permissive validation
-    if (expectedContentLength <= 0L) {
-      val reasonableMinSize = if (isThumbnail) 100L else 500L
-      return actualSize >= reasonableMinSize
-    }
-    
-    // Server provided expected size - validate against it with generous tolerance
-    val tolerance = when {
-      // Small files can vary more proportionally
-      expectedContentLength < 1024L -> 0.8 // Allow 80% variance for very small files
-      expectedContentLength < 10240L -> 0.5 // Allow 50% variance for small files  
-      expectedContentLength < 102400L -> 0.3 // Allow 30% variance for medium files
-      else -> 0.2 // Allow 20% variance for large files
-    }
-    
-    val minExpectedSize = (expectedContentLength * (1.0 - tolerance)).toLong()
-    val maxExpectedSize = (expectedContentLength * (1.0 + tolerance)).toLong()
-    
-    val isWithinRange = actualSize in minExpectedSize..maxExpectedSize
-    
-    if (!isWithinRange) {
-      Logger.d(TAG, "isFileSizeReasonable() size out of range: actual=$actualSize, " +
-        "expected=$expectedContentLength, range=[$minExpectedSize, $maxExpectedSize]")
-    }
-    
-    return isWithinRange
   }
 
   /**
@@ -1000,10 +985,11 @@ class ThreadDownloadingDelegate(
         
         // Basic WebP validation: check file size field consistency
         if (bytesRead >= 16) {
-          val fileSize = ((buffer[7].toInt() and 0xFF) shl 24) or
-                        ((buffer[6].toInt() and 0xFF) shl 16) or
+          // RIFF file size is little-endian
+          val fileSize = (buffer[4].toInt() and 0xFF) or
                         ((buffer[5].toInt() and 0xFF) shl 8) or
-                        (buffer[4].toInt() and 0xFF)
+                        ((buffer[6].toInt() and 0xFF) shl 16) or
+                        ((buffer[7].toInt() and 0xFF) shl 24)
           
           val actualSize = fileManager.getLength(file)
           // WebP file size should match the declared size (with 8 byte header offset)
@@ -1049,72 +1035,6 @@ class ThreadDownloadingDelegate(
     }
   }
 
-  private suspend fun isAllMediaDownloaded(
-    threadDescriptor: ChanDescriptor.ThreadDescriptor,
-    ownerThreadDatabaseId: Long
-  ): Boolean {
-    val chanPostImages = chanPostImageRepository.selectPostImagesByOwnerThreadDatabaseId(ownerThreadDatabaseId)
-      .peekError { error -> Logger.e(TAG, "Failed to select images by threadId: ${ownerThreadDatabaseId}", error) }
-      .valueOrNull() ?: return true // If we can't fetch images, assume they're all downloaded
-
-    if (chanPostImages.isEmpty()) {
-      Logger.d(TAG, "isAllMediaDownloaded() no images for thread: $threadDescriptor")
-      return true // No images to download
-    }
-
-    val rootDir = fileManager.fromRawFile(appConstants.threadDownloaderCacheDir)
-    val directoryName = formatDirectoryName(threadDescriptor)
-    val outputDirectory = fileManager.findFile(rootDir, directoryName)
-    
-    if (outputDirectory == null) {
-      Logger.d(TAG, "isAllMediaDownloaded() output directory not found for thread: $threadDescriptor")
-      return false
-    }
-
-    var totalImages = 0
-    var downloadedImages = 0
-    var missingImages = mutableListOf<String>()
-
-    // Check if all images (thumbnails and full images) are downloaded
-    for (postImage in chanPostImages) {
-      // Check thumbnail
-      val thumbnailName = postImage.actualThumbnailUrl?.extractFileName()
-      if (thumbnailName.isNotNullNorEmpty()) {
-        totalImages++
-        val thumbnailFile = fileManager.findFile(outputDirectory, thumbnailName)
-        if (thumbnailFile != null && fileManager.exists(thumbnailFile) && fileManager.getLength(thumbnailFile) > 0L) {
-          downloadedImages++
-        } else {
-          missingImages.add("thumbnail: $thumbnailName")
-        }
-      }
-
-      // Check full image
-      val fullImageName = postImage.imageUrl?.extractFileName()
-      if (fullImageName.isNotNullNorEmpty()) {
-        totalImages++
-        val fullImageFile = fileManager.findFile(outputDirectory, fullImageName)
-        if (fullImageFile != null && fileManager.exists(fullImageFile) && fileManager.getLength(fullImageFile) > 0L) {
-          downloadedImages++
-        } else {
-          missingImages.add("full image: $fullImageName")
-        }
-      }
-    }
-
-    val allDownloaded = downloadedImages == totalImages
-    
-    Logger.d(TAG, "isAllMediaDownloaded() thread=$threadDescriptor, " +
-      "downloaded=$downloadedImages/$totalImages, allDownloaded=$allDownloaded")
-    
-    if (!allDownloaded && missingImages.isNotEmpty()) {
-      Logger.d(TAG, "isAllMediaDownloaded() missing images: ${missingImages.take(5).joinToString(", ")}" +
-        if (missingImages.size > 5) " and ${missingImages.size - 5} more..." else "")
-    }
-
-    return allDownloaded
-  }
-
   /**
    * Cleanup incomplete downloads and temporary files on app restart
    */
@@ -1142,196 +1062,11 @@ class ThreadDownloadingDelegate(
           Logger.d(TAG, "cleanupIncompleteDownloads() removing temp file: ${tempFile.getFullPath()}")
           fileManager.delete(tempFile)
         }
-
-        // Check for suspiciously small files that might be corrupt
-        val imageFiles = files.filter { file ->
-          val fileName = file.getFullPath()
-          !fileName.startsWith(".") && 
-          !fileName.endsWith(".tmp") && 
-          !fileName.endsWith(".part")
-        }
-        
-        imageFiles.forEach { imageFile ->
-          val fileSize = fileManager.getLength(imageFile)
-          val fileName = imageFile.getFullPath()
-          
-          // Check if file is suspiciously small (using more conservative thresholds)
-          val isThumbnail = fileName.contains("s.") || fileName.contains("thumb")
-          val absoluteMinSize = if (isThumbnail) 50L else 200L
-          
-          var shouldDelete = false
-          var reason = ""
-          
-          if (fileSize > 0L && fileSize < absoluteMinSize) {
-            shouldDelete = true
-            reason = "extremely small file (${fileSize} bytes, likely corrupt)"
-          } else if (fileSize >= absoluteMinSize) {
-            // Additional validation: check if file is actually a valid image
-            if (!isValidMediaFile(imageFile)) {
-              shouldDelete = true
-              reason = "invalid image format/corruption detected"
-            }
-          }
-          
-          if (shouldDelete) {
-            Logger.w(TAG, "cleanupIncompleteDownloads() removing $reason: $fileName")
-            fileManager.delete(imageFile)
-          }
-        }
       }
       
       Logger.d(TAG, "cleanupIncompleteDownloads() completed")
-      
-      // Removed premature validation that was marking active threads as complete
-      // The normal download cycle now handles completion checking properly using
-      // ThreadDownloadCompletionHelper which checks BOTH media status AND thread activity
-      
-      // One-time legacy data cleanup: clear success messages from old completed threads
-      // This runs synchronously to ensure cleanup completes before worker processes threads
-      runOneTimeCleanup()
     } catch (error: Throwable) {
       Logger.e(TAG, "cleanupIncompleteDownloads() error", error)
-    }
-  }
-  
-  /**
-   * One-time cleanup to remove success messages from downloadResultMsg.
-   * This fixes the UI issue where completed threads show exclamation icon
-   * because old success messages were stored in downloadResultMsg field.
-   * 
-   * Runs synchronously on worker startup to ensure cleanup happens before
-   * thread processing. Has timeout protection and retry limit.
-   */
-  private suspend fun runOneTimeCleanup() {
-    if (isCleanupDone()) {
-      Logger.d(TAG, "Success message cleanup already completed")
-      return
-    }
-    
-    val retryCount = getRetryCount()
-    if (retryCount >= 3) {
-      Logger.e(TAG, "Cleanup failed 3 times, giving up")
-      markCleanupDone() // Mark as done to prevent infinite retries
-      clearRetryCount()
-      return
-    }
-    
-    try {
-      withTimeout(5000) { // 5 second timeout
-        cleanupSuccessMessages()
-      }
-      markCleanupDone()
-      clearRetryCount()
-      Logger.d(TAG, "Success message cleanup completed successfully")
-    } catch (e: TimeoutCancellationException) {
-      incrementRetryCount()
-      Logger.e(TAG, "Cleanup timed out (attempt ${retryCount + 1}/3), will retry next launch", e)
-    } catch (e: Exception) {
-      incrementRetryCount()
-      Logger.e(TAG, "Cleanup failed (attempt ${retryCount + 1}/3), will retry next launch", e)
-    }
-  }
-  
-  /**
-   * Clears downloadResultMsg field for all threads that have success messages.
-   * This includes all statuses - Running, Stopped, and Completed threads.
-   */
-  private suspend fun cleanupSuccessMessages() {
-    BackgroundUtils.ensureBackgroundThread()
-    
-    val allThreadDownloads = threadDownloadManager.getAllThreadDownloads()
-    val threadsNeedingCleanup = allThreadDownloads.filter { threadDownload ->
-      threadDownload.downloadResultMsg != null &&
-      isSuccessMessage(threadDownload.downloadResultMsg!!)
-    }
-    
-    Logger.d(TAG, "Found ${threadsNeedingCleanup.size} threads with success messages needing cleanup")
-    
-    threadsNeedingCleanup.forEach { threadDownload ->
-      try {
-        threadDownloadManager.updateThreadDownload(threadDownload.threadDescriptor) { 
-          it.copy(downloadResultMsg = null)
-        }
-      } catch (e: Exception) {
-        Logger.e(TAG, "Failed to cleanup thread ${threadDownload.threadDescriptor}", e)
-        throw e // Re-throw to trigger retry
-      }
-    }
-    
-    Logger.d(TAG, "Successfully cleaned up ${threadsNeedingCleanup.size} threads")
-  }
-  
-  /**
-   * Check if a downloadResultMsg represents a success message (not a warning).
-   * Success messages should be cleared so the UI shows a checkmark instead of exclamation.
-   */
-  private fun isSuccessMessage(message: String): Boolean {
-    val lowerMsg = message.lowercase()
-    
-    // First check: if it contains warning keywords, it's NOT success
-    val warningKeywords = listOf(
-      "warning", "unavailable", "exceeded", "failed", 
-      "failing", "permanently", "error", "incomplete"
-    )
-    
-    if (warningKeywords.any { lowerMsg.contains(it) }) {
-      return false
-    }
-    
-    // Second check: does it match success patterns?
-    val successPatterns = listOf(
-      "all media downloaded",
-      "thread has no media", 
-      "media download disabled",
-      "download complete"
-    )
-    
-    return successPatterns.any { lowerMsg.contains(it) }
-  }
-  
-  private fun getCleanupFlagFile(): File {
-    return File(appConstants.threadDownloaderCacheDir, ".success_msg_cleanup_v1.done")
-  }
-  
-  private fun isCleanupDone(): Boolean {
-    return getCleanupFlagFile().exists()
-  }
-  
-  private fun markCleanupDone() {
-    try {
-      getCleanupFlagFile().createNewFile()
-    } catch (e: Exception) {
-      Logger.e(TAG, "Failed to create cleanup flag file", e)
-    }
-  }
-  
-  private fun getRetryCountFile(): File {
-    return File(appConstants.threadDownloaderCacheDir, ".success_msg_cleanup_retries")
-  }
-  
-  private fun getRetryCount(): Int {
-    return try {
-      val file = getRetryCountFile()
-      if (file.exists()) file.readText().toIntOrNull() ?: 0 else 0
-    } catch (e: Exception) {
-      0
-    }
-  }
-  
-  private fun incrementRetryCount() {
-    try {
-      val count = getRetryCount() + 1
-      getRetryCountFile().writeText(count.toString())
-    } catch (e: Exception) {
-      Logger.e(TAG, "Failed to increment retry count", e)
-    }
-  }
-  
-  private fun clearRetryCount() {
-    try {
-      getRetryCountFile().delete()
-    } catch (e: Exception) {
-      Logger.e(TAG, "Failed to clear retry count", e)
     }
   }
 
@@ -1339,31 +1074,9 @@ class ThreadDownloadingDelegate(
     private const val TAG = "ThreadDownloadingDelegate"
     private const val NO_MEDIA_FILE_NAME = ".nomedia"
     private const val POSTS_PROCESSED_PROGRESS = 0.2f
-
-    /**
-     * Format duration in seconds to human-readable string.
-     * - Less than 60s: "X seconds"
-     * - 1-59 minutes: "X minutes"
-     * - 1+ hours: "Xh Ym" (e.g., "2h 30m")
-     */
-    private fun formatDuration(seconds: Long): String {
-      return when {
-        seconds < 60 -> "$seconds seconds"
-        seconds < 3600 -> {
-          val minutes = seconds / 60
-          "$minutes minutes"
-        }
-        else -> {
-          val hours = seconds / 3600
-          val minutes = (seconds % 3600) / 60
-          if (minutes > 0) {
-            "${hours}h ${minutes}m"
-          } else {
-            "${hours}h"
-          }
-        }
-      }
-    }
+    private const val CDN_THROTTLE_DURATION_MS = 60_000L // 1 minute
+    private const val THREAD_PROCESSING_TIMEOUT_MS = 10L * 60 * 1000 // 10 minutes per thread
+    private const val IMAGE_DOWNLOAD_TIMEOUT_MS = 5L * 60 * 1000 // 5 minutes per image
 
     fun formatDirectoryName(threadDescriptor: ChanDescriptor.ThreadDescriptor): String {
       return buildString {
