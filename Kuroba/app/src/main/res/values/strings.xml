@@ -1346,6 +1346,7 @@ If you ever log out or if the passcode expires you will have to change reply mod
     <string name="image_saver_navigate">Navigate</string>
     <string name="image_saver_resolve_duplicates">Resolve duplicates</string>
     <string name="image_saver_downloading_images">Downloading images</string>
+    <string name="thread_downloader_downloading_threads">Downloading threads</string>
     <string name="image_saver_no_unresolved_images_found">No unresolved duplicate images were found</string>
     <string name="image_saver_finished_downloading_images_success">Successfully finished downloading %1$d images</string>
     <string name="image_saver_finished_downloading_images_progress">Downloading %1$d/%2$d images</string>

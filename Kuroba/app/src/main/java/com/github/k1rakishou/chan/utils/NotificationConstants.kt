@@ -20,6 +20,7 @@ object NotificationConstants {
   const val POSTING_SERVICE_NOTIFICATION_ID = 4
   const val FILTER_SUMMARY_NOTIFICATION_ID = 5
   const val FILTER_WATCHER_NOTIFICATION_ID = 6
+  const val THREAD_DOWNLOADER_NOTIFICATION_ID = 7
 
   const val REPLY_NOTIFICATION_ACTION = "${BuildConfig.APPLICATION_ID}_reply_notification_action"
   const val LAST_PAGE_NOTIFICATION_ACTION = "${BuildConfig.APPLICATION_ID}_last_page_notification_action"
@@ -141,6 +142,11 @@ object NotificationConstants {
     const val FW_NOTIFICATION_CHANNEL_NAME = "Notification channel for filter watcher"
 
     const val FW_NOTIFICATION_CLICK_THREAD_DESCRIPTORS_KEY = "filter_watcher_notification_click_thread_descriptors"
+  }
+
+  object ThreadDownloaderNotifications {
+    const val THREAD_DOWNLOADER_NOTIFICATION_CHANNEL_ID = "${BuildConfig.APPLICATION_ID}_thread_downloader_notification_channel"
+    const val THREAD_DOWNLOADER_NOTIFICATION_NAME = "Notification channel for thread downloader"
   }
 
 }
